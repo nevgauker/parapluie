@@ -8,7 +8,7 @@ export const metadata = {
 
 export default function OpenWorldPage() {
   return (
-    <main style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: '#0d110b', display: 'flex', flexDirection: 'column' }}>
+    <main style={{ width: '100vw', height: '100dvh', overflow: 'hidden', background: '#0d110b', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
       <div style={{ padding: '16px 24px', borderBottom: '1px solid rgba(74,222,128,0.2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(232,244,226,0.02)' }}>
         <Link href="/" style={{ textDecoration: 'none', color: 'rgba(74,222,128,0.6)', fontSize: 8, fontWeight: 700, fontFamily: 'var(--pixel)', textTransform: 'uppercase', letterSpacing: 1, transition: 'color 0.2s ease' }}>
