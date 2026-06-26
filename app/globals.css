@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+:root {
+  --asphalt: #0d110b;
+  --fog: #e8f4e2;
+  --green: #4ade80;
+  --orange: #fb923c;
+  --rain: #378ADD;
+  --muted: rgba(232,244,226,0.45);
+  --border: rgba(232,244,226,0.1);
+  --pixel: 'Press Start 2P', monospace;
+  --glow-green: 0 0 12px rgba(74,222,128,0.6), 0 0 30px rgba(74,222,128,0.25);
+  --glow-orange: 0 0 12px rgba(251,146,60,0.6), 0 0 30px rgba(251,146,60,0.25);
+  --glow-purple: 0 0 12px rgba(168,85,247,0.6), 0 0 30px rgba(168,85,247,0.25);
+  --glow-rain: 0 0 12px rgba(55,138,221,0.6), 0 0 30px rgba(55,138,221,0.25);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--asphalt);
+  color: var(--fog);
+  font-family: 'Inter', sans-serif;
+  overflow-x: hidden;
+}
+
+@keyframes rain-fall {
+  from { transform: translateY(-20px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes letter-wet {
+  0%   { opacity: 0; transform: translateY(-8px); color: var(--fog); }
+  40%  { opacity: 1; transform: translateY(2px);  color: var(--rain); }
+  100% { opacity: 1; transform: translateY(0);    color: var(--fog); }
+}
+
+.letter-anim {
+  display: inline-block;
+  opacity: 0;
+  animation: letter-wet 0.55s cubic-bezier(.22,.68,0,1.2) forwards;
+}
+
+@keyframes pulse-ring {
+  0%   { transform: scale(1);    opacity: 0.6; }
+  100% { transform: scale(1.8);  opacity: 0; }
+}
+
+.pulse-ring {
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-20px); }
+}
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+@keyframes border-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes neon-pulse {
+  0%, 100% { text-shadow: var(--glow-green); }
+  50% { text-shadow: 0 0 5px rgba(74,222,128,0.3); }
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--asphalt); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* game iframe / canvas wrapper */
+.game-shell {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  overflow: hidden;
+  background: #111c10;
+  position: relative;
+}
