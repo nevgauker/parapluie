@@ -1,6 +1,12 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import VirtualDPad from './VirtualDPad';
+import {
+  PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
+  drawDryZone, drawGoalMarker, drawObstacle, drawWetOverlay, drawHud,
+  drawPrompt, walkWidth,
+  type StreetView, type DryZone, type Ripple,
+} from '../_lib/street';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; pauseLeft: number }
@@ -26,6 +32,10 @@ const GOAL_TYPES = [
 ];
 
 const STREET_WIDTH = 320;
+/** How far P2 can stray before the rain reaches them. */
+const COVER_R = 72;
+/** Drawn size of the canopy itself — the shelter circle is wider. */
+const CANOPY_R = 25;
 
 export default function RunnerGameTwoPlayer() {
   const [gameState, setGameState] = useState<GameState>('menu');
@@ -47,14 +57,14 @@ export default function RunnerGameTwoPlayer() {
     const setCanvasSize = () => {
       const container = canvas.parentElement;
       if (container) {
-        const rect = container.getBoundingClientRect();
-        W = Math.max(rect.width, 1);
-        H = Math.max(rect.height, 1);
+        W = Math.max(container.clientWidth, 1);
+        H = Math.max(container.clientHeight, 1);
         canvas.width = W;
         canvas.height = H;
       }
     };
     setCanvasSize();
+    window.addEventListener('resize', setCanvasSize);
 
     let raf = 0, t = 0, lastTs = 0;
     let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing';
@@ -65,11 +75,19 @@ export default function RunnerGameTwoPlayer() {
     let goals: Goal[] = [];
     let sparks: Spark[] = [];
     let obstacles: Obstacle[] = [];
+    const ripples: Ripple[] = [];
     let obstacleId = 0;
     let difficulty = 1, diffTimer = 0, obstacleTimer = 0, goalTimer = 0;
+    // facing + walk-cycle state for the two figures
+    let wAngle = 0, fAngle = 0, wPhase = 0, fPhase = 0;
 
     const cityConfig = CITIES[city];
     const KEYS = keysRef.current;
+
+    // The roadway narrows on small screens so the sidewalks stay visible.
+    const roadW = () => Math.max(180, Math.min(STREET_WIDTH, W - 56));
+    const edges = () => { const w = roadW(); return { left: (W - w) / 2, right: (W + w) / 2 }; };
+    const project = (y: number) => y - worldY + H / 2;
 
     const onDown = (e: KeyboardEvent) => { KEYS[e.key] = true; };
     const onUp = (e: KeyboardEvent) => { KEYS[e.key] = false; };
@@ -83,8 +101,8 @@ export default function RunnerGameTwoPlayer() {
 
     function spawnGoal() {
       const type = GOAL_TYPES[Math.floor(Math.random() * GOAL_TYPES.length)];
-      const streetLeft = W / 2 - STREET_WIDTH / 2;
-      const gx = streetLeft + 40 + Math.random() * (STREET_WIDTH - 80);
+      const { left, right } = edges();
+      const gx = left + 40 + Math.random() * Math.max(20, right - left - 80);
       const gy = worldY - 150 - Math.random() * 200;
       goals.push({ ...type, x: gx, y: gy, age: 0, pulse: 0, reached: false, pauseLeft: 0 });
     }
@@ -92,8 +110,8 @@ export default function RunnerGameTwoPlayer() {
 
     function spawnObstacle() {
       const obs = cityConfig.obstacles[Math.floor(Math.random() * cityConfig.obstacles.length)];
-      const streetLeft = W / 2 - STREET_WIDTH / 2;
-      const ox = streetLeft + Math.random() * (STREET_WIDTH - obs.w);
+      const { left, right } = edges();
+      const ox = left + Math.random() * Math.max(10, right - left - obs.w);
       const oy = worldY - 200 - Math.random() * 150;
       obstacles.push({ id: obstacleId++, x: ox, y: oy, w: obs.w, h: obs.h, emoji: obs.emoji });
     }
@@ -109,9 +127,15 @@ export default function RunnerGameTwoPlayer() {
         if (d.y > H) Object.assign(d, newDrop());
       }
 
-      const streetLeft = W / 2 - STREET_WIDTH / 2;
-      const streetRight = W / 2 + STREET_WIDTH / 2;
+      const { left: streetLeft, right: streetRight } = edges();
+      const pwx = wx, pwy = wy, pfx = fx, pfy = fy;
       const spd = 2.8 * dt * 60;
+
+      // Rain hitting the road, in world space so the rings scroll with it.
+      tickRipples(ripples, dt, 11, () => ({
+        x: streetLeft + Math.random() * (streetRight - streetLeft),
+        y: worldY - H / 2 + Math.random() * H,
+      }));
 
       // P1 (woman) - free movement with WASD
       if (KEYS['a'] || KEYS['A']) wvx -= spd;
@@ -169,6 +193,15 @@ export default function RunnerGameTwoPlayer() {
         }
       });
 
+      // Facing and stride: the street itself is moving, so both figures keep
+      // walking even when the players hold still.
+      const wStep = Math.hypot(wx - pwx, wy - pwy);
+      const fStep = Math.hypot(fx - pfx, fy - pfy);
+      if (wStep > 0.35) wAngle = Math.atan2(wy - pwy, wx - pwx) + Math.PI / 2;
+      if (fStep > 0.35) fAngle = Math.atan2(fy - pfy, fx - pfx) + Math.PI / 2;
+      wPhase += (2 + wStep * 6) * dt * 5;
+      fPhase += (2 + fStep * 6) * dt * 5;
+
       // Goals - BOTH players can collect
       for (const g of goals) {
         g.age += dt;
@@ -202,7 +235,7 @@ export default function RunnerGameTwoPlayer() {
 
       // Wetness
       const sep = Math.hypot(fx - wx, fy - wy);
-      if (sep > 72) wet = Math.min(1, wet + dt * 0.18);
+      if (sep > COVER_R) wet = Math.min(1, wet + dt * 0.18);
       else wet = Math.max(0, wet - dt * 0.05);
 
       sparks.forEach(s => {
@@ -218,170 +251,64 @@ export default function RunnerGameTwoPlayer() {
     }
 
     function draw() {
+      const { left, right } = edges();
+      const view: StreetView = { W, H, left, right, scroll: -worldY, walk: walkWidth(W, right - left) };
+
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = '#1a2416';
-      ctx.fillRect(0, 0, W, H);
+      drawGround(ctx, view);
+      drawProps(ctx, view, worldY, t);
 
-      const streetLeft = W / 2 - STREET_WIDTH / 2;
-      const streetRight = W / 2 + STREET_WIDTH / 2;
+      const wScreenY = project(wy);
+      const fScreenY = project(fy);
+      const sep = Math.hypot(fx - wx, fy - wy);
+      const dry: DryZone[] = [{ x: wx, y: wScreenY, r: COVER_R }];
 
-      ctx.fillStyle = 'rgba(100,120,80,0.15)';
-      ctx.fillRect(streetLeft, 0, STREET_WIDTH, H);
-
-      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.moveTo(streetLeft, 0); ctx.lineTo(streetLeft, H); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(streetRight, 0); ctx.lineTo(streetRight, H); ctx.stroke();
-
-      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-      ctx.lineWidth = 1;
-      const markOffset = worldY % 40;
-      for (let y = -markOffset; y < H; y += 40) {
-        ctx.beginPath();
-        ctx.moveTo(W / 2 - 25, y);
-        ctx.lineTo(W / 2 + 25, y);
-        ctx.stroke();
-      }
-
-      ctx.lineCap = 'round';
-      for (const d of drops) {
-        const screenY = d.y - worldY + H / 2;
-        if (screenY > -20 && screenY < H + 20) {
-          ctx.strokeStyle = `rgba(55,138,221,${d.a})`;
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(d.x, screenY);
-          ctx.lineTo(d.x - 5, screenY + d.len);
-          ctx.stroke();
-        }
-      }
+      drawRipples(ctx, ripples, project, dry);
 
       obstacles.forEach((obs) => {
-        const screenY = obs.y - worldY + H / 2;
-        if (screenY > -100 && screenY < H + 100) {
-          ctx.fillStyle = 'rgba(255,100,100,0.25)';
-          ctx.fillRect(obs.x, screenY, obs.w, obs.h);
-          ctx.strokeStyle = 'rgba(255,100,100,0.5)';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(obs.x, screenY, obs.w, obs.h);
-          ctx.font = '32px serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(obs.emoji, obs.x + obs.w / 2, screenY + obs.h / 2);
-        }
+        const screenY = project(obs.y);
+        if (screenY > -140 && screenY < H + 140) drawObstacle(ctx, obs.x, screenY, obs.w, obs.h, obs.emoji);
       });
 
       for (const g of goals) {
         if (g.reached) continue;
-        const screenY = g.y - worldY + H / 2;
-        if (screenY > -50 && screenY < H + 50) {
-          const a = Math.min(1, g.age);
-          const pr = 18 + Math.sin(g.pulse) * 5;
-          ctx.beginPath();
-          ctx.arc(g.x, screenY, pr, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(255,220,80,${0.3 * (1 - g.age / g.dur) * a})`;
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-          ctx.save();
-          ctx.globalAlpha = a;
-          ctx.font = '20px serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(g.emoji, g.x, screenY);
-          const prog = 1 - g.age / g.dur;
-          ctx.beginPath();
-          ctx.arc(g.x, screenY, 14, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
-          ctx.strokeStyle = `rgba(255,220,80,0.55)`;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          ctx.restore();
+        const screenY = project(g.y);
+        if (screenY > -60 && screenY < H + 60) {
+          drawGoalMarker(ctx, g.x, screenY, g.emoji, 1 - g.age / g.dur, g.pulse, g.age * 2);
         }
       }
 
-      const wScreenY = wy - worldY + H / 2;
-      const fScreenY = fy - worldY + H / 2;
+      drawDryZone(ctx, wx, wScreenY, COVER_R, sep / COVER_R);
 
-      // Umbrella zone
-      ctx.beginPath();
-      ctx.arc(wx, wScreenY, 72, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.04)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      // P2 walks bare-headed; P1 is hidden under the canopy.
+      drawWalker(ctx, fx, fScreenY, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
+        angle: fAngle, phase: fPhase, wet,
+      });
+      drawWalker(ctx, wx, wScreenY, { jacket: PALETTE.jacketBlue, accent: '#7cc24f' }, {
+        angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06,
+      });
 
-      // Woman
-      ctx.beginPath();
-      ctx.arc(wx, wScreenY, 10, 0, Math.PI * 2);
-      ctx.fillStyle = '#4ade80';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Follower
-      ctx.beginPath();
-      ctx.arc(fx, fScreenY, 8, 0, Math.PI * 2);
-      const sep = Math.hypot(fx - wx, fy - wy);
-      ctx.fillStyle = sep > 72 ? '#ef4444' : '#fb923c';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
+      drawRainField(ctx, drops, H, undefined, dry);
 
       for (const s of sparks) {
-        const screenY = s.y - worldY + H / 2;
         ctx.save();
         ctx.globalAlpha = s.life;
         ctx.font = '14px serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(s.emoji, s.x, screenY);
+        ctx.fillText(s.emoji, s.x, project(s.y));
         ctx.restore();
       }
 
-      if (wet > 0.15) {
-        const g = ctx.createRadialGradient(wx, wScreenY, W * 0.12, wx, wScreenY, W * 0.75);
-        g.addColorStop(0, 'rgba(20,50,110,0)');
-        g.addColorStop(1, `rgba(20,50,110,${(wet - 0.15) * 0.55})`);
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, W, H);
-      }
-
-      ctx.font = '500 11px Inter,sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.fillText('score', 14, 14);
-      ctx.font = '500 20px Inter,sans-serif';
-      ctx.fillStyle = '#fff';
-      ctx.fillText(Math.round(score).toString(), 14, 28);
-
-      ctx.fillStyle = 'rgba(255,255,255,0.1)';
-      ctx.fillRect(W - 114, 16, 100, 5);
-      ctx.beginPath();
-      ctx.arc(W - 114, 18.5, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(W - 14, 18.5, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = wet > 0.65 ? '#ef4444' : wet > 0.3 ? '#EF9F27' : '#378ADD';
-      ctx.fillRect(W - 114, 16, wet * 100, 5);
-      ctx.font = '10px Inter,sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.3)';
-      ctx.textAlign = 'right';
-      ctx.fillText('wetness', W - 14, 26);
+      drawWetOverlay(ctx, W, H, fx, fScreenY, wet);
+      drawHud(ctx, W, score, wet, 54);
 
       if (!running) {
-        ctx.fillStyle = 'rgba(0,0,0,0.55)';
-        ctx.fillRect(0, 0, W, H);
-        ctx.font = '500 15px Inter,sans-serif';
-        ctx.fillStyle = '#fff';
-        ctx.textAlign = 'center';
-        ctx.fillText(isTouchRef.current ? 'tap to start' : 'click to start', W / 2, H / 2);
-        ctx.font = '12px Inter,sans-serif';
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.fillText('P1: WASD · P2: Arrows  |  Collect together', W / 2, H / 2 + 24);
+        drawPrompt(
+          ctx, W, H,
+          isTouchRef.current ? 'tap to start' : 'click to start',
+          'P1: WASD · P2: Arrows — collect together',
+        );
       }
     }
 
@@ -414,37 +341,37 @@ export default function RunnerGameTwoPlayer() {
   return (
     <div className="relative w-full h-full">
       <canvas ref={ref} className="block w-full h-full" style={{ cursor: 'default', display: 'block', touchAction: 'none' }} />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }} position="left" color="#4ade80" label="P1" />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }} position="right" color="#fb923c" label="P2" />
+      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }} position="left" color="#7cc24f" label="P1" />
+      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }} position="right" color="#e08a3c" label="P2" />
 
       {gameState === 'menu' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', borderRadius: 16 }}>
-          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 28, fontWeight: 700, color: '#e8f4e2', marginBottom: 6 }}>Runner</p>
-          <p style={{ fontSize: 12, color: 'rgba(232,244,226,0.4)', marginBottom: 28, textAlign: 'center', lineHeight: 1.7 }}>Walk forward together.<br />Collect goals. Stay dry.</p>
+          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 28, fontWeight: 700, color: 'var(--fog)', marginBottom: 6 }}>Runner</p>
+          <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.4)', marginBottom: 28, textAlign: 'center', lineHeight: 1.7 }}>Walk forward together.<br />Collect goals. Stay dry.</p>
           <div className="flex gap-2 mb-6">
             {(Object.keys(CITIES) as City[]).map(c => (
-              <button key={c} onClick={() => setCity(c)} style={{ padding: '6px 16px', borderRadius: 20, border: '.5px solid', borderColor: city === c ? 'rgba(232,244,226,0.45)' : 'rgba(232,244,226,0.15)', background: city === c ? 'rgba(232,244,226,0.12)' : 'transparent', color: city === c ? '#e8f4e2' : 'rgba(232,244,226,0.45)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>{CITIES[c].name}</button>
+              <button key={c} onClick={() => setCity(c)} style={{ padding: '6px 16px', borderRadius: 20, border: '.5px solid', borderColor: city === c ? 'rgba(240,236,224,0.45)' : 'rgba(240,236,224,0.15)', background: city === c ? 'rgba(240,236,224,0.12)' : 'transparent', color: city === c ? 'var(--fog)' : 'rgba(240,236,224,0.45)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>{CITIES[c].name}</button>
             ))}
           </div>
-          <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: '#a855f7', color: '#0d110b', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start Game</button>
+          <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: 'var(--brick)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start Game</button>
         </div>
       )}
 
       {gameState === 'dead' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.82)' }}>
-          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 24, fontWeight: 700, color: '#e8f4e2', marginBottom: 4 }}>{endStats.time > 30 ? 'Not bad.' : 'Soaked.'}</p>
-          <p style={{ fontSize: 12, color: 'rgba(232,244,226,0.35)', marginBottom: 24 }}>{endStats.time > 60 ? 'Great teamwork!' : endStats.time > 30 ? 'Keep going' : 'Stay together!'}</p>
+          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 24, fontWeight: 700, color: 'var(--fog)', marginBottom: 4 }}>{endStats.time > 30 ? 'Not bad.' : 'Soaked.'}</p>
+          <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.35)', marginBottom: 24 }}>{endStats.time > 60 ? 'Great teamwork!' : endStats.time > 30 ? 'Keep going' : 'Stay together!'}</p>
           <div className="flex gap-6 mb-7">
             {[['score', endStats.score], ['time', endStats.time + 's']].map(([l, v]) => (
               <div key={l as string} style={{ textAlign: 'center' }}>
-                <span style={{ display: 'block', fontSize: 22, fontWeight: 500, color: '#e8f4e2', fontFamily: "'Space Grotesk',sans-serif" }}>{v}</span>
-                <span style={{ fontSize: 10, color: 'rgba(232,244,226,0.38)' }}>{l}</span>
+                <span style={{ display: 'block', fontSize: 22, fontWeight: 500, color: 'var(--fog)', fontFamily: "'Space Grotesk',sans-serif" }}>{v}</span>
+                <span style={{ fontSize: 10, color: 'rgba(240,236,224,0.38)' }}>{l}</span>
               </div>
             ))}
           </div>
           <div className="flex gap-3">
-            <button onClick={handleRestart} style={{ padding: '10px 24px', borderRadius: 24, background: '#e8f4e2', color: '#0d110b', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Play again</button>
-            <button onClick={handleMenu} style={{ padding: '10px 24px', borderRadius: 24, background: 'transparent', color: 'rgba(232,244,226,0.55)', border: '.5px solid rgba(232,244,226,0.2)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Menu</button>
+            <button onClick={handleRestart} style={{ padding: '10px 24px', borderRadius: 24, background: 'var(--fog)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Play again</button>
+            <button onClick={handleMenu} style={{ padding: '10px 24px', borderRadius: 24, background: 'transparent', color: 'rgba(240,236,224,0.55)', border: '.5px solid rgba(240,236,224,0.2)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Menu</button>
           </div>
         </div>
       )}

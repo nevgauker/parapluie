@@ -1,7 +1,11 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import VirtualDPad from './VirtualDPad';
+import {
+  PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
+  drawDryZone, drawGoalMarker, drawWetOverlay, walkWidth,
+  type StreetView, type DryZone, type Ripple,
+} from '../_lib/street';
 
 // ── types ──────────────────────────────────────────────────────────────────
 interface Drop  { x:number; y:number; len:number; spd:number; a:number }
@@ -51,7 +55,15 @@ export default function TwoPlayerGame() {
     let wet=0, wScore=0, fScore=0, elapsed=0;
     let difficulty=1, diffTimer=0, goalTimer=0, bgOff=0;
     let goals:Goal[]=[], drops:Drop[]=[], sparks:Spark[]=[];
+    let ripples:Ripple[]=[];
+    let wAngle=0, fAngle=0, wPhase=0, fPhase=0;
     let raf=0, lt=0, active=false;
+
+    // Street geometry: a wide roadway with cobbled pavement down both sides.
+    const INSET = 58;
+    const view: StreetView = {
+      W, H, left: INSET, right: W - INSET, scroll: 0, walk: walkWidth(W, W - INSET * 2),
+    };
 
     // ── keys ──
     const KEYS = keysRef.current;
@@ -78,7 +90,8 @@ export default function TwoPlayerGame() {
       fx=W/2+40; fy=H*.56; fvx=0; fvy=0;
       wet=0; wScore=0; fScore=0; elapsed=0;
       difficulty=1; diffTimer=0; goalTimer=0; bgOff=0;
-      goals=[]; sparks=[];
+      goals=[]; sparks=[]; ripples=[];
+      wAngle=0; fAngle=0; wPhase=0; fPhase=0;
       drops = Array.from({length:100}, ()=>newDrop(true));
       spawnGoal(); spawnGoal(); spawnGoal();
     }
@@ -88,9 +101,11 @@ export default function TwoPlayerGame() {
       elapsed+=dt; bgOff=(bgOff+.5)%80;
       diffTimer+=dt;
       if (diffTimer>20) { diffTimer=0; difficulty=Math.min(3.5, difficulty+.1); }
+      const pwx=wx, pwy=wy, pfx=fx, pfy=fy;
 
       // rain
       for (const d of drops) { d.y+=d.spd*(1+difficulty*.2); if(d.y>H) Object.assign(d,newDrop()); }
+      tickRipples(ripples, dt, 12, () => ({ x: Math.random()*W, y: Math.random()*H }));
 
       // P2 — woman (arrow keys)
       const wspd = (3.8+difficulty*.4)*dt*60;
@@ -129,6 +144,14 @@ export default function TwoPlayerGame() {
       fx=Math.max(10,Math.min(W-10,fx));
       fy=Math.max(10,Math.min(H-10,fy));
 
+      // facing + stride
+      const wStep = Math.hypot(wx-pwx, wy-pwy);
+      const fStep = Math.hypot(fx-pfx, fy-pfy);
+      if (wStep>.35) wAngle = Math.atan2(wy-pwy, wx-pwx) + Math.PI/2;
+      if (fStep>.35) fAngle = Math.atan2(fy-pfy, fx-pfx) + Math.PI/2;
+      wPhase += (.6+wStep*6)*dt*5;
+      fPhase += (.6+fStep*6)*dt*5;
+
       // wetness
       const R = 76+(difficulty>2?-8:0);
       const sep = Math.hypot(fx-wx, fy-wy);
@@ -147,11 +170,11 @@ export default function TwoPlayerGame() {
     }
 
     // ── draw background ──
+    // The street itself: painted on the lower canvas so the scene layer above
+    // only has to clear moving objects.
     function drawBg() {
-      bx.fillStyle='#1a2416'; bx.fillRect(0,0,W,H);
-      bx.strokeStyle='rgba(255,255,255,.04)'; bx.lineWidth=1;
-      for(let x=0;x<W;x+=80){bx.beginPath();bx.moveTo(x,0);bx.lineTo(x,H);bx.stroke();}
-      for(let y=-(80-(bgOff%80));y<H+80;y+=80){bx.beginPath();bx.moveTo(0,y);bx.lineTo(W,y);bx.stroke();}
+      drawGround(bx, view);
+      drawProps(bx, view, 0, elapsed);
     }
 
     // ── draw scene ──
@@ -159,64 +182,40 @@ export default function TwoPlayerGame() {
       ctx.clearRect(0,0,W,H);
       ctx.lineCap='round';
 
-      // rain
-      for (const d of drops) {
-        ctx.strokeStyle=`rgba(55,138,221,${d.a})`; ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(d.x,d.y); ctx.lineTo(d.x-5,d.y+d.len); ctx.stroke();
-      }
+      const R = 76+(difficulty>2?-8:0);
+      const sep = Math.hypot(fx-wx,fy-wy);
+      const dry: DryZone[] = [{ x: wx, y: wy, r: R }];
+
+      drawRipples(ctx, ripples, undefined, dry);
 
       // goals
       for (const g of goals) {
         if (g.reached) continue;
-        const age = Math.min(1,g.age*.8);
         const urgency = g.age/g.dur;
-        const pr = 20+Math.sin(g.pulse)*5;
-        ctx.beginPath(); ctx.arc(g.x,g.y,pr,0,Math.PI*2);
-        ctx.strokeStyle=`rgba(255,220,80,${.35*(1-urgency)*age})`; ctx.lineWidth=1.5; ctx.stroke();
-        ctx.save(); ctx.globalAlpha=Math.min(1,age);
-        ctx.font='22px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-        ctx.fillText(g.emoji, g.x, g.y);
-        const prog=1-urgency;
-        ctx.beginPath(); ctx.arc(g.x,g.y,15,-Math.PI/2,-Math.PI/2+prog*Math.PI*2);
-        ctx.strokeStyle=urgency>.7?'rgba(239,68,68,.8)':'rgba(255,220,80,.6)'; ctx.lineWidth=2.5; ctx.stroke();
+        drawGoalMarker(ctx, g.x, g.y, g.emoji, 1-urgency, g.pulse, g.age*.8);
         if (urgency>.6) {
-          ctx.font='10px Inter,sans-serif'; ctx.textBaseline='top';
-          ctx.fillStyle=`rgba(239,68,68,${(urgency-.6)*2.5})`;
-          ctx.fillText('fading',g.x,g.y+18);
+          ctx.font='10px Inter,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+          ctx.fillStyle=`rgba(239,88,68,${(urgency-.6)*2.5})`;
+          ctx.fillText('fading',g.x,g.y+20);
         }
-        ctx.restore();
       }
 
-      // umbrella zone
-      const R = 76+(difficulty>2?-8:0);
-      const sep = Math.hypot(fx-wx,fy-wy);
-      const outside = sep>R;
-      const edgeGlow = outside ? Math.min(1,(sep-R)/R*.8) : sep>R*.75 ? Math.min(1,(sep-R*.75)/(R*.25))*.5 : 0;
-      ctx.beginPath(); ctx.arc(wx,wy,R,0,Math.PI*2);
-      ctx.fillStyle='rgba(255,255,255,.04)'; ctx.fill();
-      ctx.strokeStyle = edgeGlow>0 ? `rgba(251,146,60,${edgeGlow*.8})` : 'rgba(255,255,255,.14)';
-      ctx.lineWidth=edgeGlow>0?2:1.5; ctx.stroke();
-      ctx.setLineDash([3,6]);
-      ctx.beginPath(); ctx.arc(wx,wy,R*.32,0,Math.PI*2);
-      ctx.strokeStyle='rgba(255,255,255,.06)'; ctx.lineWidth=1; ctx.stroke();
-      ctx.setLineDash([]);
+      drawDryZone(ctx, wx, wy, R, sep/R);
 
-      // P1 follower
-      ctx.beginPath(); ctx.arc(fx,fy,9,0,Math.PI*2);
-      ctx.fillStyle=outside?'#ef4444':'#fb923c'; ctx.fill();
-      ctx.strokeStyle='rgba(255,255,255,.85)'; ctx.lineWidth=1.5; ctx.stroke();
-      ctx.font='500 9px Inter,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
-      ctx.fillStyle='rgba(251,146,60,.55)'; ctx.fillText('WASD',fx,fy-12);
+      // P1 follower — bare-headed, soaks when they stray
+      drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent:'#e08a3c' }, {
+        angle: fAngle, phase: fPhase, wet,
+      });
+      // P2 woman — under the canopy
+      drawWalker(ctx, wx, wy, { jacket: PALETTE.jacketBlue, accent:'#7cc24f' }, {
+        angle: wAngle, phase: wPhase, umbrella: 24, spin: Math.sin(elapsed*.7)*.06,
+      });
 
-      // P2 woman
-      ctx.beginPath(); ctx.arc(wx,wy,10,0,Math.PI*2);
-      ctx.fillStyle='#4ade80'; ctx.fill();
-      ctx.strokeStyle='rgba(255,255,255,.85)'; ctx.lineWidth=1.5; ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(wx,wy-10); ctx.lineTo(wx,wy-22);
-      ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=2; ctx.stroke();
-      ctx.beginPath(); ctx.arc(wx,wy-22,7,Math.PI,Math.PI*2); ctx.stroke();
       ctx.font='500 9px Inter,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
-      ctx.fillStyle='rgba(74,222,128,.55)'; ctx.fillText('↑↓←→',wx,wy-28);
+      ctx.fillStyle='rgba(224,138,60,.6)'; ctx.fillText('WASD',fx,fy-16);
+      ctx.fillStyle='rgba(124,194,79,.6)'; ctx.fillText('↑↓←→',wx,wy-36);
+
+      drawRainField(ctx, drops, H, undefined, dry);
 
       // sparks
       for (const s of sparks) {
@@ -225,35 +224,27 @@ export default function TwoPlayerGame() {
         ctx.fillText(s.emoji,s.x,s.y); ctx.restore();
       }
 
-      // wetness vignette
-      if (wet>.12) {
-        const g2 = ctx.createRadialGradient(W/2,H/2,W*.12,W/2,H/2,W*.8);
-        g2.addColorStop(0,'rgba(15,45,110,0)');
-        g2.addColorStop(1,`rgba(15,45,110,${(wet-.12)*.62})`);
-        ctx.fillStyle=g2; ctx.fillRect(0,0,W,H);
-      }
+      drawWetOverlay(ctx, W, H, fx, fy, wet);
 
       // in-game scores
       ctx.font='500 10px Inter,sans-serif'; ctx.textBaseline='bottom';
-      ctx.textAlign='left';  ctx.fillStyle='rgba(251,146,60,.45)';  ctx.fillText('P1: '+Math.round(fScore),14,H-14);
-      ctx.textAlign='right'; ctx.fillStyle='rgba(74,222,128,.45)';  ctx.fillText('P2: '+Math.round(wScore),W-14,H-14);
+      ctx.textAlign='left';  ctx.fillStyle='rgba(224,138,60,.55)';  ctx.fillText('P1: '+Math.round(fScore),14,H-14);
+      ctx.textAlign='right'; ctx.fillStyle='rgba(124,194,79,.55)';  ctx.fillText('P2: '+Math.round(wScore),W-14,H-14);
       if (difficulty>1.5) {
-        ctx.textAlign='center'; ctx.fillStyle=`rgba(239,68,68,${(difficulty-1.5)/2*.45})`;
+        ctx.textAlign='center'; ctx.fillStyle=`rgba(239,88,68,${(difficulty-1.5)/2*.5})`;
         ctx.fillText('difficulty '+difficulty.toFixed(1)+'×',W/2,H-14);
       }
     }
 
     // ── menu background ──
     function drawMenuBg() {
-      bx.fillStyle='#1a2416'; bx.fillRect(0,0,W,H);
-      bx.strokeStyle='rgba(255,255,255,.04)'; bx.lineWidth=1;
-      for(let x=0;x<W;x+=80){bx.beginPath();bx.moveTo(x,0);bx.lineTo(x,H);bx.stroke();}
-      for(let y=0;y<H;y+=80){bx.beginPath();bx.moveTo(0,y);bx.lineTo(W,y);bx.stroke();}
+      drawGround(bx, view);
+      drawProps(bx, view, 0, 0);
       ctx.clearRect(0,0,W,H); ctx.lineCap='round';
       for(let i=0;i<120;i++){
         const rx=Math.random()*W, ry=Math.random()*H;
-        ctx.strokeStyle=`rgba(55,138,221,${.06+Math.random()*.1})`; ctx.lineWidth=1;
-        ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx-2,ry+13); ctx.stroke();
+        ctx.strokeStyle=`rgba(${PALETTE.rain},${.06+Math.random()*.12})`; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx-3,ry+13); ctx.stroke();
       }
     }
 
@@ -306,7 +297,7 @@ export default function TwoPlayerGame() {
       tabIndex={0}
       onClick={() => wrapRef.current?.focus()}
       className="relative w-full h-full outline-none"
-      style={{ background:'#1a2416', cursor:'default' }}
+      style={{ background: PALETTE.night, cursor:'default' }}
     >
       <canvas ref={bgRef} width={480} height={620} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
       <canvas ref={cvRef} width={480} height={620} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
@@ -314,14 +305,14 @@ export default function TwoPlayerGame() {
         keysRef={keysRef}
         keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
         position="left"
-        color="#fb923c"
+        color="#e08a3c"
         label="P1"
       />
       <VirtualDPad
         keysRef={keysRef}
         keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }}
         position="right"
-        color="#4ade80"
+        color="#7cc24f"
         label="P2"
       />
 
@@ -330,20 +321,20 @@ export default function TwoPlayerGame() {
         <div className="absolute top-0 left-0 w-full pointer-events-none" style={{ padding:'12px 16px' }}>
           <div className="flex justify-between items-start">
             <div>
-              <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:'#4ade80' }}>P2 — Woman</div>
-              <div style={{ fontSize:22, fontWeight:700, color:'#e8f4e2', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(endData.wScore)}</div>
-              <div style={{ fontSize:10, color:'rgba(232,244,226,.3)' }}>{isTouchDevice ? 'goals · D-pad' : 'goals · arrows'}</div>
+              <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:'#7cc24f' }}>P2 — Woman</div>
+              <div style={{ fontSize:22, fontWeight:700, color:'var(--fog)', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(endData.wScore)}</div>
+              <div style={{ fontSize:10, color:'rgba(240,236,224,.3)' }}>{isTouchDevice ? 'goals · D-pad' : 'goals · arrows'}</div>
             </div>
             <div style={{ textAlign:'center' }}>
-              <div style={{ fontSize:10, color:'rgba(232,244,226,.35)', marginBottom:3 }}>wetness</div>
+              <div style={{ fontSize:10, color:'rgba(240,236,224,.35)', marginBottom:3 }}>wetness</div>
               <div style={{ width:80, height:5, background:'rgba(255,255,255,.1)', borderRadius:3, overflow:'hidden', margin:'0 auto' }}>
                 <div style={{ height:'100%', borderRadius:3, transition:'width .1s, background .2s', width:`${endData.wet*100}%`, background: endData.wet>.65?'#ef4444':endData.wet>.3?'#EF9F27':'#378ADD' }} />
               </div>
             </div>
             <div style={{ textAlign:'right' }}>
-              <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:'#fb923c' }}>P1 — Follower</div>
-              <div style={{ fontSize:22, fontWeight:700, color:'#e8f4e2', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(endData.fScore)}</div>
-              <div style={{ fontSize:10, color:'rgba(232,244,226,.3)' }}>{isTouchDevice ? 'survive · D-pad' : 'survive · WASD'}</div>
+              <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:'#e08a3c' }}>P1 — Follower</div>
+              <div style={{ fontSize:22, fontWeight:700, color:'var(--fog)', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(endData.fScore)}</div>
+              <div style={{ fontSize:10, color:'rgba(240,236,224,.3)' }}>{isTouchDevice ? 'survive · D-pad' : 'survive · WASD'}</div>
             </div>
           </div>
         </div>
@@ -352,38 +343,38 @@ export default function TwoPlayerGame() {
       {/* ── MENU ── */}
       {screen==='menu' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background:'rgba(0,0,0,.8)' }}>
-          <p style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:32, fontWeight:700, color:'#e8f4e2', letterSpacing:'-.01em', marginBottom:6 }}>Parapluie</p>
-          <p style={{ fontSize:13, color:'rgba(232,244,226,.38)', marginBottom:36, textAlign:'center', lineHeight:1.8 }}>
+          <p style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:32, fontWeight:700, color:'var(--fog)', letterSpacing:'-.01em', marginBottom:6 }}>Parapluie</p>
+          <p style={{ fontSize:13, color:'rgba(240,236,224,.38)', marginBottom:36, textAlign:'center', lineHeight:1.8 }}>
             Two players. One umbrella.
             <br />
             {isTouchDevice ? 'Use D-pads.' : 'One keyboard.'}
           </p>
           <div className="flex gap-8 mb-8">
             {[
-              { color:'#4ade80', name:'P2 — Woman',   keys:'↑ ↓ ← → to move', score:'collect goals' },
-              { color:'#fb923c', name:'P1 — Follower', keys:'W A S D to move', score:'stay under umbrella' },
+              { color:'#7cc24f', name:'P2 — Woman',   keys:'↑ ↓ ← → to move', score:'collect goals' },
+              { color:'#e08a3c', name:'P1 — Follower', keys:'W A S D to move', score:'stay under umbrella' },
             ].map(p=>(
               <div key={p.name} style={{ textAlign:'center' }}>
                 <div style={{ width:16, height:16, borderRadius:'50%', background:p.color, margin:'0 auto 8px', border:'2px solid rgba(255,255,255,.8)' }} />
                 <div style={{ fontSize:12, fontWeight:500, color:p.color, marginBottom:6 }}>{p.name}</div>
-                <div style={{ fontSize:11, color:'rgba(232,244,226,.4)', lineHeight:1.9 }}>{p.keys}<br />{p.score}</div>
+                <div style={{ fontSize:11, color:'rgba(240,236,224,.4)', lineHeight:1.9 }}>{p.keys}<br />{p.score}</div>
               </div>
             ))}
           </div>
-          <button onClick={handleStart} style={{ padding:'13px 44px', borderRadius:28, background:'#e8f4e2', color:'#0d110b', border:'none', fontSize:15, fontWeight:500, cursor:'pointer', fontFamily:'inherit', marginBottom:10 }}>
+          <button onClick={handleStart} style={{ padding:'13px 44px', borderRadius:28, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:15, fontWeight:500, cursor:'pointer', fontFamily:'inherit', marginBottom:10 }}>
             Start
           </button>
-          <p style={{ fontSize:11, color:'rgba(232,244,226,.2)' }}>click here first, then use keyboard</p>
+          <p style={{ fontSize:11, color:'rgba(240,236,224,.2)' }}>click here first, then use keyboard</p>
         </div>
       )}
 
       {/* ── END ── */}
       {screen==='end' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background:'rgba(0,0,0,.82)' }}>
-          <p style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:26, fontWeight:700, color:'#e8f4e2', marginBottom:4 }}>
+          <p style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:26, fontWeight:700, color:'var(--fog)', marginBottom:4 }}>
             {endData.fScore > endData.wScore ? 'P1 wins!' : 'P2 wins!'}
           </p>
-          <p style={{ fontSize:12, color:'rgba(232,244,226,.35)', marginBottom:28 }}>
+          <p style={{ fontSize:12, color:'rgba(240,236,224,.35)', marginBottom:28 }}>
             {endData.time > 45 ? 'Great run! Swap roles next round.' : 'Stay closer next time!'}
           </p>
           <div className="flex gap-6 mb-7">
@@ -393,14 +384,14 @@ export default function TwoPlayerGame() {
               { label:'lasted', val: endData.time+'s' },
             ].map(s=>(
               <div key={s.label} style={{ textAlign:'center' }}>
-                <span style={{ display:'block', fontSize:22, fontWeight:700, color:'#e8f4e2', fontFamily:"'Space Grotesk',sans-serif" }}>{s.val}</span>
-                <span style={{ fontSize:10, color:'rgba(232,244,226,.38)' }}>{s.label}</span>
+                <span style={{ display:'block', fontSize:22, fontWeight:700, color:'var(--fog)', fontFamily:"'Space Grotesk',sans-serif" }}>{s.val}</span>
+                <span style={{ fontSize:10, color:'rgba(240,236,224,.38)' }}>{s.label}</span>
               </div>
             ))}
           </div>
           <div className="flex gap-3">
-            <button onClick={handleRestart} style={{ padding:'10px 28px', borderRadius:24, background:'#e8f4e2', color:'#0d110b', border:'none', fontSize:13, fontWeight:500, cursor:'pointer', fontFamily:'inherit' }}>Play again</button>
-            <button onClick={handleMenu}   style={{ padding:'10px 24px', borderRadius:24, background:'transparent', color:'rgba(232,244,226,.5)', border:'.5px solid rgba(232,244,226,.2)', fontSize:13, cursor:'pointer', fontFamily:'inherit' }}>Menu</button>
+            <button onClick={handleRestart} style={{ padding:'10px 28px', borderRadius:24, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:13, fontWeight:500, cursor:'pointer', fontFamily:'inherit' }}>Play again</button>
+            <button onClick={handleMenu}   style={{ padding:'10px 24px', borderRadius:24, background:'transparent', color:'rgba(240,236,224,.5)', border:'.5px solid rgba(240,236,224,.2)', fontSize:13, cursor:'pointer', fontFamily:'inherit' }}>Menu</button>
           </div>
         </div>
       )}
