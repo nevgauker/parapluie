@@ -1,18 +1,33 @@
 @import "tailwindcss";
 
+/*
+ * Palette lifted from the game's street renderer (app/_lib/street.ts), which
+ * in turn follows the reference art in art/: night asphalt, cobble, warm
+ * cream, one saturated yellow umbrella, and lamplight as the only real glow.
+ */
 :root {
-  --asphalt: #0d110b;
-  --fog: #e8f4e2;
-  --green: #4ade80;
-  --orange: #fb923c;
-  --rain: #378ADD;
-  --muted: rgba(232,244,226,0.45);
-  --border: rgba(232,244,226,0.1);
+  --asphalt: #14181c;
+  --stone: #1c2126;
+  --stone-lit: #242a2f;
+  --cobble: #736b5f;
+  --fog: #f0ece0;
+  --umbrella: #f5c518;
+  --lamp: #ffd682;
+  --foliage: #6aa845;
+  --brick: #b0564d;
+  --rain: #a9c4d4;
+  /* legacy aliases, kept for the in-game player colours */
+  --green: #6aa845;
+  --orange: #f5c518;
+  --muted: rgba(240,236,224,0.45);
+  --border: rgba(240,236,224,0.1);
   --pixel: 'Press Start 2P', monospace;
-  --glow-green: 0 0 12px rgba(74,222,128,0.6), 0 0 30px rgba(74,222,128,0.25);
-  --glow-orange: 0 0 12px rgba(251,146,60,0.6), 0 0 30px rgba(251,146,60,0.25);
-  --glow-purple: 0 0 12px rgba(168,85,247,0.6), 0 0 30px rgba(168,85,247,0.25);
-  --glow-rain: 0 0 12px rgba(55,138,221,0.6), 0 0 30px rgba(55,138,221,0.25);
+  /* Lamplight, not neon: warm, wide, low contrast. */
+  --glow-lamp: 0 0 18px rgba(255,214,130,0.30), 0 0 52px rgba(255,214,130,0.10);
+  --glow-umbrella: 0 0 16px rgba(245,197,24,0.30), 0 0 44px rgba(245,197,24,0.10);
+  --glow-foliage: 0 0 16px rgba(106,168,69,0.28), 0 0 44px rgba(106,168,69,0.10);
+  --glow-brick: 0 0 16px rgba(176,86,77,0.28), 0 0 44px rgba(176,86,77,0.10);
+  --glow-rain: 0 0 16px rgba(169,196,212,0.22), 0 0 44px rgba(169,196,212,0.08);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -33,7 +48,7 @@ body {
 
 @keyframes letter-wet {
   0%   { opacity: 0; transform: translateY(-8px); color: var(--fog); }
-  40%  { opacity: 1; transform: translateY(2px);  color: var(--rain); }
+  40%  { opacity: 1; transform: translateY(2px);  color: var(--lamp); }
   100% { opacity: 1; transform: translateY(0);    color: var(--fog); }
 }
 
@@ -67,9 +82,10 @@ body {
   to { transform: rotate(360deg); }
 }
 
-@keyframes neon-pulse {
-  0%, 100% { text-shadow: var(--glow-green); }
-  50% { text-shadow: 0 0 5px rgba(74,222,128,0.3); }
+/* Street lamps breathe rather than pulse. */
+@keyframes lamp-flicker {
+  0%, 100% { text-shadow: var(--glow-lamp); }
+  50% { text-shadow: 0 0 10px rgba(255,214,130,0.18); }
 }
 
 /* scrollbar */
@@ -82,6 +98,34 @@ body {
   border: 1px solid var(--border);
   border-radius: 16px;
   overflow: hidden;
-  background: #111c10;
+  background: var(--stone);
   position: relative;
+}
+
+/*
+ * Wet stone panel: a warm rim along the lit top edge, cool shadow below —
+ * the same cel-shading rule the game's sprites use.
+ */
+.stone-panel {
+  position: relative;
+  border-radius: 14px;
+  background: linear-gradient(160deg, var(--stone-lit), var(--stone));
+  border: 1px solid rgba(240,236,224,0.08);
+  box-shadow: inset 0 1px 0 rgba(255,246,224,0.10), 0 14px 32px rgba(0,0,0,0.45);
+  transition: border-color .3s ease, box-shadow .3s ease, transform .3s ease;
+}
+
+.stone-panel:hover {
+  transform: translateY(-2px);
+  border-color: rgba(240,236,224,0.16);
+}
+
+/* Puddle-like sheen that drifts across a panel on hover. */
+.stone-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 80% at 15% 0%, rgba(255,214,130,0.07), transparent 60%);
 }

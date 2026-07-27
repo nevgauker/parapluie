@@ -1,7 +1,7 @@
 'use client';
 import dynamic from 'next/dynamic';
 
-const RainCanvas    = dynamic(() => import('./RainCanvas'),    { ssr: false });
-const AnimatedTitle = dynamic(() => import('./AnimatedTitle'), { ssr: false });
+const StreetBackdrop = dynamic(() => import('./StreetBackdrop'), { ssr: false });
+const AnimatedTitle  = dynamic(() => import('./AnimatedTitle'),  { ssr: false });
 
-export { RainCanvas, AnimatedTitle };
+export { StreetBackdrop, AnimatedTitle };

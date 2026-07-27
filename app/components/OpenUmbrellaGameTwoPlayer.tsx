@@ -1,12 +1,24 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import VirtualDPad from './VirtualDPad';
+import {
+  PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
+  drawDryZone, drawGoalMarker, drawWetOverlay, drawHud, drawPrompt, walkWidth,
+  type StreetView, type DryZone, type Ripple,
+} from '../_lib/street';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number; }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; pauseLeft: number; }
 interface Spark { x: number; y: number; vx: number; vy: number; life: number; emoji: string; }
 
 type GameState = 'menu' | 'playing' | 'dead';
+
+/** How far P2 can stray before the rain reaches them. */
+const COVER_R = 72;
+/** Drawn size of the canopy itself — the shelter circle is wider. */
+const CANOPY_R = 25;
+/** Pavement strip left either side of the open square. */
+const KERB_INSET = 66;
 
 const GOAL_TYPES = [
   { emoji: '🐕', pts: 120, dur: 9, pause: 2.0 },
@@ -55,9 +67,12 @@ export default function OpenUmbrellaGameTwoPlayer() {
     const drops: Drop[] = [];
     let goals: Goal[] = [];
     let sparks: Spark[] = [];
+    const ripples: Ripple[] = [];
     let difficulty = 1;
     let diffTimer = 0;
     let bgOff = 0;
+    // facing + walk-cycle state for the two figures
+    let wAngle = 0, fAngle = 0, wPhase = 0, fPhase = 0;
 
     // Keyboard input
     const KEYS = keysRef.current;
@@ -84,8 +99,11 @@ export default function OpenUmbrellaGameTwoPlayer() {
       t += dt; elapsed += dt; bgOff = (bgOff + 0.8) % 80;
       diffTimer += dt;
       if (diffTimer > 15) { diffTimer = 0; difficulty = Math.min(3, difficulty + 0.15); }
+      const pwx = wx, pwy = wy, pfx = fx, pfy = fy;
 
       for (const d of drops) { d.y += d.spd * (1 + difficulty * 0.25); if (d.y > H) Object.assign(d, newDrop()); }
+
+      tickRipples(ripples, dt, 12, () => ({ x: Math.random() * W, y: Math.random() * H }));
 
       // P1 (woman) - WASD
       const p1spd = (3.5 + difficulty * 0.3) * dt * 60;
@@ -121,9 +139,17 @@ export default function OpenUmbrellaGameTwoPlayer() {
       }
       goals = goals.filter(g => g.reached || g.age < g.dur);
 
+      // facing + stride
+      const wStep = Math.hypot(wx - pwx, wy - pwy);
+      const fStep = Math.hypot(fx - pfx, fy - pfy);
+      if (wStep > 0.35) wAngle = Math.atan2(wy - pwy, wx - pwx) + Math.PI / 2;
+      if (fStep > 0.35) fAngle = Math.atan2(fy - pfy, fx - pfx) + Math.PI / 2;
+      wPhase += (0.6 + wStep * 6) * dt * 5;
+      fPhase += (0.6 + fStep * 6) * dt * 5;
+
       // wetness - based on separation
       const sep = Math.hypot(fx - wx, fy - wy);
-      if (sep > 72) wet = Math.min(1, wet + dt * 0.18); else wet = Math.max(0, wet - dt * 0.05);
+      if (sep > COVER_R) wet = Math.min(1, wet + dt * 0.18); else wet = Math.max(0, wet - dt * 0.05);
 
       sparks.forEach(s => { s.x += s.vx; s.y += s.vy; s.life -= dt * 1.5; });
       sparks = sparks.filter(s => s.life > 0);
@@ -136,63 +162,41 @@ export default function OpenUmbrellaGameTwoPlayer() {
     }
 
     function draw() {
+      const inset = Math.min(KERB_INSET, W * 0.16);
+      const view: StreetView = {
+        W, H, left: inset, right: W - inset, scroll: 0,
+        walk: walkWidth(W, W - inset * 2),
+      };
+
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = '#1a2416'; ctx.fillRect(0, 0, W, H);
+      drawGround(ctx, view);
+      drawProps(ctx, view, 0, t);
 
-      // grid
-      ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 1;
-      for (let x = 0; x < W; x += 80) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-      for (let y = 0; y < H; y += 80) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+      const sep = Math.hypot(fx - wx, fy - wy);
+      const dry: DryZone[] = [{ x: wx, y: wy, r: COVER_R }];
 
-      // rain
-      ctx.lineCap = 'round';
-      for (const d of drops) {
-        ctx.strokeStyle = `rgba(55,138,221,${d.a})`; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - 5, d.y + d.len); ctx.stroke();
-      }
+      drawRipples(ctx, ripples, undefined, dry);
 
-      // goals
       for (const g of goals) {
         if (g.reached) continue;
-        const a = Math.min(1, g.age);
-        const pr = 18 + Math.sin(g.pulse) * 5;
-        ctx.beginPath(); ctx.arc(g.x, g.y, pr, 0, Math.PI * 2);
-        ctx.strokeStyle = `rgba(255,220,80,${0.3 * (1 - g.age / g.dur) * a})`; ctx.lineWidth = 1.5; ctx.stroke();
-        ctx.save(); ctx.globalAlpha = a;
-        ctx.font = '20px serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(g.emoji, g.x, g.y);
-        const prog = 1 - g.age / g.dur;
-        ctx.beginPath(); ctx.arc(g.x, g.y, 14, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2);
-        ctx.strokeStyle = `rgba(255,220,80,0.55)`; ctx.lineWidth = 2; ctx.stroke();
-        ctx.restore();
+        drawGoalMarker(ctx, g.x, g.y, g.emoji, 1 - g.age / g.dur, g.pulse, g.age * 2);
       }
 
-      // umbrella zone
-      ctx.beginPath(); ctx.arc(wx, wy, 72, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,255,255,0.04)'; ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.setLineDash([3, 6]);
-      ctx.beginPath(); ctx.arc(wx, wy, 24, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.setLineDash([]);
+      drawDryZone(ctx, wx, wy, COVER_R, sep / COVER_R);
 
-      // P1 (woman)
-      ctx.beginPath(); ctx.arc(wx, wy, 10, 0, Math.PI * 2);
-      ctx.fillStyle = '#4ade80'; ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(wx, wy - 10); ctx.lineTo(wx, wy - 22);
-      ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2; ctx.stroke();
-      ctx.beginPath(); ctx.arc(wx, wy - 22, 7, Math.PI, Math.PI * 2); ctx.stroke();
-      ctx.font = '500 9px Inter,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillStyle = 'rgba(74,222,128,.55)'; ctx.fillText('P1 WASD', wx, wy - 28);
+      drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
+        angle: fAngle, phase: fPhase, wet,
+      });
+      drawWalker(ctx, wx, wy, { jacket: PALETTE.jacketBlue, accent: '#7cc24f' }, {
+        angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06,
+      });
 
-      // P2 (follower)
-      ctx.beginPath(); ctx.arc(fx, fy, 8, 0, Math.PI * 2);
-      const sep = Math.hypot(fx - wx, fy - wy);
-      ctx.fillStyle = sep > 72 ? '#ef4444' : '#fb923c'; ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.5; ctx.stroke();
+      // player tags, kept clear of the canopy
       ctx.font = '500 9px Inter,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillStyle = 'rgba(251,146,60,.55)'; ctx.fillText('P2 ↑↓←→', fx, fy - 12);
+      ctx.fillStyle = 'rgba(124,194,79,.6)'; ctx.fillText('P1', wx, wy - CANOPY_R - 6);
+      ctx.fillStyle = 'rgba(224,138,60,.6)'; ctx.fillText('P2', fx, fy - 16);
+
+      drawRainField(ctx, drops, H, undefined, dry);
 
       // sparks
       for (const s of sparks) {
@@ -201,33 +205,14 @@ export default function OpenUmbrellaGameTwoPlayer() {
         ctx.fillText(s.emoji, s.x, s.y); ctx.restore();
       }
 
-      // wetness vignette
-      if (wet > 0.15) {
-        const g = ctx.createRadialGradient(W / 2, H / 2, W * .12, W / 2, H / 2, W * .75);
-        g.addColorStop(0, 'rgba(20,50,110,0)');
-        g.addColorStop(1, `rgba(20,50,110,${(wet - .15) * .55})`);
-        ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-      }
-
-      // hud
-      ctx.font = '500 11px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillText('score', 14, 14);
-      ctx.font = '500 20px Inter,sans-serif'; ctx.fillStyle = '#fff'; ctx.fillText(Math.round(score).toString(), 14, 28);
-      // wet bar
-      ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.fillRect(W - 114, 16, 100, 5); ctx.beginPath(); ctx.arc(W - 114, 18.5, 2.5, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(W - 14, 18.5, 2.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = wet > .65 ? '#ef4444' : wet > .3 ? '#EF9F27' : '#378ADD';
-      ctx.fillRect(W - 114, 16, wet * 100, 5);
-      ctx.font = '10px Inter,sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.3)'; ctx.textAlign = 'right';
-      ctx.fillText('wetness', W - 14, 26);
+      drawWetOverlay(ctx, W, H, fx, fy, wet);
+      drawHud(ctx, W, score, wet, 54);
 
       if (!running) {
-        ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(0, 0, W, H);
-        ctx.font = '500 15px Inter,sans-serif'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-        ctx.fillText(isTouchRef.current ? 'tap to start' : 'click to start', W / 2, H / 2);
-        ctx.font = '12px Inter,sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
-        ctx.fillText(
-          isTouchRef.current ? 'use D-pads to move' : 'P1: WASD to move  |  P2: Arrow keys to move',
-          W / 2, H / 2 + 24
+        drawPrompt(
+          ctx, W, H,
+          isTouchRef.current ? 'tap to start' : 'click to start',
+          isTouchRef.current ? 'use the D-pads to move' : 'P1: WASD · P2: Arrow keys',
         );
       }
     }
@@ -267,36 +252,36 @@ export default function OpenUmbrellaGameTwoPlayer() {
         keysRef={keysRef}
         keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
         position="left"
-        color="#4ade80"
+        color="#7cc24f"
         label="P1"
       />
       <VirtualDPad
         keysRef={keysRef}
         keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }}
         position="right"
-        color="#fb923c"
+        color="#e08a3c"
         label="P2"
       />
 
       {gameState === 'dead' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.82)' }}>
-          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 24, fontWeight: 700, color: '#e8f4e2', marginBottom: 4 }}>
+          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 24, fontWeight: 700, color: 'var(--fog)', marginBottom: 4 }}>
             {endStats.time > 30 ? 'Not bad.' : 'Soaked.'}
           </p>
-          <p style={{ fontSize: 12, color: 'rgba(232,244,226,0.35)', marginBottom: 24 }}>
+          <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.35)', marginBottom: 24 }}>
             {endStats.time > 60 ? 'Great teamwork!' : endStats.time > 30 ? 'Keep practicing' : 'Stay together!'}
           </p>
           <div className="flex gap-6 mb-7">
             {[['score', endStats.score], ['time', endStats.time + 's']].map(([l, v]) => (
               <div key={l as string} style={{ textAlign: 'center' }}>
-                <span style={{ display: 'block', fontSize: 22, fontWeight: 500, color: '#e8f4e2', fontFamily: "'Space Grotesk',sans-serif" }}>{v}</span>
-                <span style={{ fontSize: 10, color: 'rgba(232,244,226,0.38)' }}>{l}</span>
+                <span style={{ display: 'block', fontSize: 22, fontWeight: 500, color: 'var(--fog)', fontFamily: "'Space Grotesk',sans-serif" }}>{v}</span>
+                <span style={{ fontSize: 10, color: 'rgba(240,236,224,0.38)' }}>{l}</span>
               </div>
             ))}
           </div>
           <div className="flex gap-3">
-            <button onClick={handleRestart} style={{ padding: '10px 24px', borderRadius: 24, background: '#e8f4e2', color: '#0d110b', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Play again</button>
-            <button onClick={handleMenu} style={{ padding: '10px 24px', borderRadius: 24, background: 'transparent', color: 'rgba(232,244,226,0.55)', border: '.5px solid rgba(232,244,226,0.2)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Menu</button>
+            <button onClick={handleRestart} style={{ padding: '10px 24px', borderRadius: 24, background: 'var(--fog)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Play again</button>
+            <button onClick={handleMenu} style={{ padding: '10px 24px', borderRadius: 24, background: 'transparent', color: 'rgba(240,236,224,0.55)', border: '.5px solid rgba(240,236,224,0.2)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Menu</button>
           </div>
         </div>
       )}
