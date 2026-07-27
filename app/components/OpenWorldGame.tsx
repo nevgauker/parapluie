@@ -13,9 +13,9 @@ export default function OpenWorldGame() {
   return (
     <div style={{ width: '100%', height: '100%' }}>
       {gameMode === 'menu' && (
-        <div style={{ width: '100%', height: '100%', background: '#0d110b', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 32, fontWeight: 700, color: '#e8f4e2', marginBottom: 6 }}>Open World</p>
-          <p style={{ fontSize: 13, color: 'rgba(232,244,226,.38)', marginBottom: 36, textAlign: 'center', lineHeight: 1.8, maxWidth: 300 }}>
+        <div style={{ width: '100%', height: '100%', background: 'var(--asphalt)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 32, fontWeight: 700, color: 'var(--fog)', marginBottom: 6 }}>Open World</p>
+          <p style={{ fontSize: 13, color: 'rgba(240,236,224,.38)', marginBottom: 36, textAlign: 'center', lineHeight: 1.8, maxWidth: 300 }}>
             Follow the woman with the umbrella.<br />Chase goals. Don't get wet.
           </p>
 
@@ -25,13 +25,13 @@ export default function OpenWorldGame() {
                 mode: 'solo',
                 title: 'Solo',
                 desc: 'One player\nMouse control\n\nYou: Move mouse to control follower\nWoman: AI chases goals',
-                color: '#4ade80'
+                color: 'var(--foliage)'
               },
               {
                 mode: 'multiplayer',
                 title: 'Two Players',
                 desc: 'One keyboard\nCooperative\n\nP1: WASD to move woman\nP2: Arrow keys to move follower',
-                color: '#a855f7'
+                color: 'var(--brick)'
               },
             ].map(option => (
               <button
@@ -40,30 +40,30 @@ export default function OpenWorldGame() {
                 style={{
                   padding: '24px 28px',
                   borderRadius: 12,
-                  background: 'rgba(232,244,226,0.05)',
-                  border: '1px solid rgba(232,244,226,0.1)',
+                  background: 'rgba(240,236,224,0.05)',
+                  border: '1px solid rgba(240,236,224,0.1)',
                   cursor: 'pointer',
                   transition: 'all 0.3s ease',
                   textAlign: 'center',
                   width: '100%',
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(232,244,226,0.1)';
-                  e.currentTarget.style.borderColor = 'rgba(232,244,226,0.2)';
+                  e.currentTarget.style.background = 'rgba(240,236,224,0.1)';
+                  e.currentTarget.style.borderColor = 'rgba(240,236,224,0.2)';
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'rgba(232,244,226,0.05)';
-                  e.currentTarget.style.borderColor = 'rgba(232,244,226,0.1)';
+                  e.currentTarget.style.background = 'rgba(240,236,224,0.05)';
+                  e.currentTarget.style.borderColor = 'rgba(240,236,224,0.1)';
                 }}
               >
                 <div style={{ width: 16, height: 16, borderRadius: '50%', background: option.color, margin: '0 auto 12px', border: '2px solid rgba(255,255,255,.8)' }} />
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#e8f4e2', marginBottom: 8, fontFamily: "'Space Grotesk',sans-serif" }}>{option.title}</div>
-                <div style={{ fontSize: 10, color: 'rgba(232,244,226,.4)', lineHeight: 1.7, whiteSpace: 'pre-line', marginTop: 8 }}>{option.desc}</div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--fog)', marginBottom: 8, fontFamily: "'Space Grotesk',sans-serif" }}>{option.title}</div>
+                <div style={{ fontSize: 10, color: 'rgba(240,236,224,.4)', lineHeight: 1.7, whiteSpace: 'pre-line', marginTop: 8 }}>{option.desc}</div>
               </button>
             ))}
           </div>
 
-          <p style={{ fontSize: 11, color: 'rgba(232,244,226,.2)' }}>choose your game mode</p>
+          <p style={{ fontSize: 11, color: 'rgba(240,236,224,.2)' }}>choose your game mode</p>
         </div>
       )}
 
@@ -77,9 +77,9 @@ export default function OpenWorldGame() {
               left: 16,
               padding: '8px 16px',
               borderRadius: 20,
-              background: 'rgba(232,244,226,0.1)',
-              border: '1px solid rgba(232,244,226,0.2)',
-              color: '#e8f4e2',
+              background: 'rgba(240,236,224,0.1)',
+              border: '1px solid rgba(240,236,224,0.2)',
+              color: 'var(--fog)',
               fontSize: 13,
               cursor: 'pointer',
               zIndex: 10,
@@ -102,9 +102,9 @@ export default function OpenWorldGame() {
               left: 16,
               padding: '8px 16px',
               borderRadius: 20,
-              background: 'rgba(232,244,226,0.1)',
-              border: '1px solid rgba(232,244,226,0.2)',
-              color: '#e8f4e2',
+              background: 'rgba(240,236,224,0.1)',
+              border: '1px solid rgba(240,236,224,0.2)',
+              color: 'var(--fog)',
               fontSize: 13,
               cursor: 'pointer',
               zIndex: 10,
