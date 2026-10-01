@@ -39,7 +39,7 @@ export default function RunnerModeSelector() {
               {
                 mode: 'multiplayer',
                 title: 'Two Players',
-                desc: 'One keyboard\nCooperative\n\nP1: WASD to move left/right\nP2: Arrow keys to move left/right',
+                desc: 'One keyboard or two gamepads\nCooperative\n\nP1: WASD or gamepad 1\nP2: arrow keys or gamepad 2',
                 color: 'var(--brick)'
               },
             ].map(option => (
