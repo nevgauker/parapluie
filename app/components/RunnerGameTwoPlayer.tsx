@@ -11,7 +11,14 @@ import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
 import { cityEvents } from '../_lib/cityEvents';
 import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
 import { pushOut } from '../_lib/collide';
-import { WASD, ARROWS, pads, padPress, readStick } from '../_lib/input';
+import { WASD, ARROWS, pads, padPress, readStick, PAD_START } from '../_lib/input';
+import { PLAYERS, tag, drawTag, controlsText } from '../_lib/players';
+import { padFor } from '../_lib/seats';
+import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
+import Seats from './Seats';
+import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
+import { TOGETHER_GRACE, ALONE_SHARE } from '../_lib/rules';
+import { makeRng, newSeed } from '../_lib/rng';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; pauseLeft: number }
@@ -24,6 +31,10 @@ type GameState = 'menu' | 'playing' | 'dead';
 const COVER_R = 72;
 /** Drawn size of the canopy itself — the shelter circle is wider. */
 const CANOPY_R = 25;
+
+/** The runner's fixed logical frame, letterboxed on screen: every device sees the same street. */
+const ARENA_W = 480;
+const ARENA_H = 720;
 
 /** How hard a full stick pushes a walker, relative to the street, per 60 Hz frame. */
 const WALK_PUSH = 0.6;
@@ -46,21 +57,10 @@ export default function RunnerGameTwoPlayer() {
     const canvas = ref.current!;
     const ctx = canvas.getContext('2d')!;
 
-    let W = 360, H = 540;
-    const setCanvasSize = () => {
-      const container = canvas.parentElement;
-      if (container) {
-        W = Math.max(container.clientWidth, 1);
-        H = Math.max(container.clientHeight, 1);
-        canvas.width = W;
-        canvas.height = H;
-      }
-    };
-    setCanvasSize();
-    window.addEventListener('resize', setCanvasSize);
+    const W = ARENA_W, H = ARENA_H;
 
     let raf = 0, t = 0, lastTs = 0;
-    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing';
+    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing', paused = false;
     let worldY = 0;
     let wx = W / 2, wy = 0, wvx = 0, wvy = 0;
     // the follower starts inside cover, even under Paris's small umbrella
@@ -77,7 +77,12 @@ export default function RunnerGameTwoPlayer() {
 
     const cityConfig = CITIES[city];
     const coverR = COVER_R * cityConfig.cover;
-    const events = cityEvents(city);
+    // goals, obstacles and hazards all come from this run's seed
+    const rng = makeRng(newSeed());
+    const events = cityEvents(city, rng);
+    // shared co-op scoring: the follower's streak multiplies goals collected together
+    const streak = newDryStreak();
+    let coveredAt = 0;
     const furnish = cityFurnish(city);
     // the umbrella's dry spot, blown downwind by Tokyo's gusts
     let dryShift = 0;
@@ -85,15 +90,16 @@ export default function RunnerGameTwoPlayer() {
     let floats: FloatText[] = [];
     const KEYS = keysRef.current;
 
-    // The roadway narrows on small screens so the sidewalks stay visible.
-    const roadW = () => Math.max(180, Math.min(cityConfig.road, W - 56));
-    const edges = () => { const w = roadW(); return { left: (W - w) / 2, right: (W + w) / 2 }; };
+    const edges = () => ({ left: (W - cityConfig.road) / 2, right: (W + cityConfig.road) / 2 });
     const project = (y: number) => y - worldY + H / 2;
 
     const onDown = (e: KeyboardEvent) => {
       KEYS[e.key] = true;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      if (running && !e.repeat && PAUSE_KEYS.includes(e.key)) paused = !paused;
     };
+    // Losing focus mid-run pauses it and lets go of every held key.
+    const stopWatching = watchFocus(KEYS, () => { if (running) paused = true; });
     const onUp = (e: KeyboardEvent) => { KEYS[e.key] = false; };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
@@ -104,19 +110,19 @@ export default function RunnerGameTwoPlayer() {
     for (let i = 0; i < cityConfig.rain; i++) drops.push(newDrop());
 
     function spawnGoal() {
-      const type = cityConfig.goals[Math.floor(Math.random() * cityConfig.goals.length)];
+      const type = cityConfig.goals[Math.floor(rng() * cityConfig.goals.length)];
       const { left, right } = edges();
-      const gx = left + 40 + Math.random() * Math.max(20, right - left - 80);
-      const gy = worldY - 150 - Math.random() * 200;
+      const gx = left + 40 + rng() * Math.max(20, right - left - 80);
+      const gy = worldY - 150 - rng() * 200;
       goals.push({ ...type, x: gx, y: gy, age: 0, pulse: 0, reached: false, pauseLeft: 0 });
     }
     spawnGoal(); spawnGoal();
 
     function spawnObstacle() {
-      const obs = cityConfig.obstacles[Math.floor(Math.random() * cityConfig.obstacles.length)];
+      const obs = cityConfig.obstacles[Math.floor(rng() * cityConfig.obstacles.length)];
       const { left, right } = edges();
-      const ox = left + Math.random() * Math.max(10, right - left - obs.w);
-      const oy = worldY - 200 - Math.random() * 150;
+      const ox = left + rng() * Math.max(10, right - left - obs.w);
+      const oy = worldY - 200 - rng() * 150;
       obstacles.push({ id: obstacleId++, x: ox, y: oy, w: obs.w, h: obs.h, emoji: obs.emoji });
     }
 
@@ -151,9 +157,8 @@ export default function RunnerGameTwoPlayer() {
       dryShift = weather.dryShift;
 
       // P1 steers the woman, P2 the follower: keys, or the first and second pad.
-      const [pad1, pad2] = pads();
-      const p1 = readStick(KEYS, WASD, pad1);
-      const p2 = readStick(KEYS, ARROWS, pad2);
+      const p1 = readStick(KEYS, WASD, padFor('p1'));
+      const p2 = readStick(KEYS, ARROWS, padFor('p2'));
       const keep = Math.pow(DAMP, f);
 
       wvx = (wvx + p1.x * WALK_PUSH * f) * keep;
@@ -186,6 +191,9 @@ export default function RunnerGameTwoPlayer() {
       wPhase += (2 + wStep * 6) * dt * 5;
       fPhase += (2 + fStep * 6) * dt * 5;
 
+      // when the follower was last under cover (or an awning), for the together grace
+      if (Math.hypot(fx - (wx + dryShift), fy - wy) <= coverR || weather.sheltered) coveredAt = elapsed;
+
       // Goals - BOTH players can collect
       for (const g of goals) {
         g.age += dt;
@@ -195,8 +203,12 @@ export default function RunnerGameTwoPlayer() {
         if (!g.reached && g.pauseLeft <= 0 && (dw < 20 || df < 20)) {
           g.reached = true;
           g.pauseLeft = g.pause;
-          score += Math.round(g.pts * difficulty);
+          // full value, times the streak, only with the follower under cover
+          const together = elapsed - coveredAt <= TOGETHER_GRACE;
+          const pts = Math.round(g.pts * difficulty * (together ? streak.mult : ALONE_SHARE));
+          score += pts;
           const collector = dw < df ? { x: wx, y: wy } : { x: fx, y: fy };
+          floats.push({ x: collector.x, y: project(collector.y) - 34, text: together ? `+${pts}` : `+${pts} alone`, color: together ? PALETTE.cream : '#ef5844', life: 1.2 });
           sparks.push(...Array.from({ length: 5 }, () => ({ x: collector.x, y: collector.y, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: g.emoji })));
           if (goals.filter(g => !g.reached).length < 3) spawnGoal();
         }
@@ -220,6 +232,9 @@ export default function RunnerGameTwoPlayer() {
 
       // Wetness - safe under the umbrella or an awning
       const sep = Math.hypot(fx - (wx + dryShift), fy - wy);
+      const edge = tickDryStreak(streak, weather.sheltered ? 0 : sep, coverR, dt, difficulty);
+      score += edge.pts;
+      floats.push(...streakCallouts(edge.events, fx, project(fy)));
       if (sep > coverR && !weather.sheltered) wet = Math.min(1, wet + dt * 0.18 * cityConfig.soak);
       else wet = Math.max(0, wet - dt * 0.05);
       wet = Math.min(1, wet + weather.splash);
@@ -271,15 +286,17 @@ export default function RunnerGameTwoPlayer() {
         }
       }
 
-      drawDryZone(ctx, wx + dryShift, wScreenY, coverR, sep / coverR);
+      drawDryZone(ctx, wx + dryShift, wScreenY, coverR, sep / coverR, streak.mult);
 
       // P2 walks bare-headed; P1 is hidden under the canopy.
-      drawWalker(ctx, fx, fScreenY, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
+      drawWalker(ctx, fx, fScreenY, { jacket: PALETTE.jacketOlive, accent: PLAYERS.p2.color }, {
         angle: fAngle, phase: fPhase, wet,
       });
-      drawWalker(ctx, wx, wScreenY, { jacket: PALETTE.jacketBlue, accent: '#7cc24f' }, {
+      drawWalker(ctx, wx, wScreenY, { jacket: PALETTE.jacketBlue, accent: PLAYERS.p1.color }, {
         angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06, canopy: cityConfig.canopy,
       });
+      drawTag(ctx, 'p2', fx, fScreenY - 16);
+      drawTag(ctx, 'p1', wx, wScreenY - CANOPY_R - 12);
 
       drawRainField(ctx, drops, H, undefined, dry);
       events.drawOver(ctx, project);
@@ -296,45 +313,50 @@ export default function RunnerGameTwoPlayer() {
 
       drawFloatTexts(ctx, floats);
       drawWetOverlay(ctx, W, H, fx, fScreenY, wet);
-      drawHud(ctx, W, score, wet, 54);
+      drawHud(ctx, W, score, wet, 54, streak.mult);
 
-      if (!running) {
-        const n = pads().length;
+      // the menu overlay has its own instructions; the prompt is for after Start
+      if (!running && stateRef.current.gameState !== 'menu') {
         drawPrompt(
           ctx, W, H,
-          n ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
-          `P1: WASD${n > 0 ? ' or 🎮 1' : ''} · P2: arrows${n > 1 ? ' or 🎮 2' : ''} — collect together`,
+          pads().length ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
+          controlsText(isTouchRef.current),
         );
+      } else if (paused) {
+        drawPrompt(ctx, W, H, 'paused', 'Esc, P or Start to resume');
       }
     }
 
-    // A or Start on any pad: start the round, or leave the menu / end screen.
+    // Pads: A or Start begins a run or plays again; Start pauses. On the menu
+    // the seats take the pad instead, so pressing A there sits you down first.
     const pressedStart = padPress();
+    const pressedPause = padPress([PAD_START]);
 
     function loop(ts: number) {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
       lastTs = ts;
-      if (pressedStart()) {
-        if (stateRef.current.gameState !== 'playing') setGameState('playing');
-        else running = true;
+      const start = pressedStart(), pause = pressedPause();
+      const state = stateRef.current.gameState;
+      if (state === 'dead' && start) setGameState('playing');
+      else if (state === 'playing') {
+        if (!running && start) running = true;
+        else if (running && (pause || (paused && start))) paused = !paused;
       }
-      if (running) update(dt);
+      if (running && !paused) update(dt);
       draw();
       raf = requestAnimationFrame(loop);
     }
     lastTs = performance.now();
     raf = requestAnimationFrame(loop);
 
-    const handleResize = () => { setCanvasSize(); };
-    window.addEventListener('resize', handleResize);
     canvas.addEventListener('click', () => { running = true; });
     canvas.addEventListener('touchstart', () => { running = true; }, { passive: true });
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
+      stopWatching();
     };
   }, [gameState, city]);
 
@@ -342,10 +364,10 @@ export default function RunnerGameTwoPlayer() {
   const handleMenu = () => { setGameState('menu'); };
 
   return (
-    <div className="relative w-full h-full">
-      <canvas ref={ref} className="block w-full h-full" style={{ cursor: 'default', display: 'block', touchAction: 'none' }} />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }} position="left" color="#7cc24f" label="P1" />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }} position="right" color="#e08a3c" label="P2" />
+    <div className="relative w-full h-full" style={{ background: PALETTE.night }}>
+      <canvas ref={ref} width={ARENA_W} height={ARENA_H} className="block w-full h-full" style={{ cursor: 'default', display: 'block', touchAction: 'none', objectFit: 'contain' }} />
+      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }} position="left" color={PLAYERS.p1.color} label={tag('p1')} />
+      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }} position="right" color={PLAYERS.p2.color} label={tag('p2')} />
 
       {gameState === 'menu' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', borderRadius: 16 }}>
@@ -357,8 +379,11 @@ export default function RunnerGameTwoPlayer() {
             ))}
           </div>
           <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.45)', marginBottom: 22, textAlign: 'center', maxWidth: 260, lineHeight: 1.6, minHeight: 36 }}>{CITIES[city].hint}</p>
+          <div style={{ marginBottom: 20 }}>
+            <Seats onStart={handleRestart} />
+          </div>
           <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: 'var(--brick)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start Game</button>
-          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.3)', marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>P1: WASD · P2: arrows<br />🎮 Gamepads work too: first is P1, second P2. Press A to start.</p>
+          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.3)', marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>● P1 holds the umbrella, ◆ P2 follows.<br />Esc, P or Start pauses.</p>
         </div>
       )}
 

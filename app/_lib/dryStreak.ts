@@ -14,8 +14,14 @@ export const EDGE_PTS = 20;
 /** Seconds of unbroken cover per multiplier step. */
 export const STREAK_STEP = 5;
 export const STREAK_MAX = 4;
+/**
+ * Seconds outside cover before the streak breaks. A follower clipping the rim
+ * for a frame keeps it, and so will a follower whose partner is a few frames
+ * stale over a network.
+ */
+export const STREAK_GRACE = 0.25;
 
-export interface DryStreak { dryTime: number; edgeTime: number; mult: number }
+export interface DryStreak { dryTime: number; edgeTime: number; mult: number; outTime: number }
 
 export type StreakEvent =
   | { kind: 'close'; pts: number }
@@ -23,7 +29,7 @@ export type StreakEvent =
   | { kind: 'lost'; mult: number };
 
 export function newDryStreak(): DryStreak {
-  return { dryTime: 0, edgeTime: 0, mult: 1 };
+  return { dryTime: 0, edgeTime: 0, mult: 1, outTime: 0 };
 }
 
 /**
@@ -35,10 +41,14 @@ export function tickDryStreak(s: DryStreak, sep: number, coverR: number, dt: num
   let pts = 0;
 
   if (sep > coverR) {
+    s.outTime += dt;
+    s.edgeTime = 0;
+    if (s.outTime < STREAK_GRACE) return { pts, events };
     if (s.mult > 1) events.push({ kind: 'lost', mult: s.mult });
-    s.dryTime = 0; s.edgeTime = 0; s.mult = 1;
+    s.dryTime = 0; s.mult = 1;
     return { pts, events };
   }
+  s.outTime = 0;
 
   s.dryTime += dt;
   const mult = Math.min(STREAK_MAX, 1 + Math.floor(s.dryTime / STREAK_STEP));

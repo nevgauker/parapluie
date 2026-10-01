@@ -51,14 +51,19 @@ export function readStick(keys: Record<string, boolean>, set: KeySet, pad?: Game
   return Math.hypot(p.x, p.y) > Math.hypot(k.x, k.y) ? p : k;
 }
 
+/** Standard-mapping button numbers. */
+export const PAD_A = 0;
+export const PAD_START = 9;
+
 /**
- * A detector for "A or Start was just pressed on any pad". Call it once per
- * frame; it is true only on the frame the button goes down.
+ * A detector for "one of these buttons was just pressed on any pad" (A or
+ * Start by default). Call it once per frame; it is true only on the frame
+ * the button goes down.
  */
-export function padPress(): () => boolean {
+export function padPress(buttons: number[] = [PAD_A, PAD_START]): () => boolean {
   let was = false;
   return () => {
-    const now = pads().some(p => p.buttons[0]?.pressed || p.buttons[9]?.pressed);
+    const now = pads().some(p => buttons.some(b => p.buttons[b]?.pressed));
     const edge = now && !was;
     was = now;
     return edge;

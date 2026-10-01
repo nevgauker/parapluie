@@ -1,0 +1,16 @@
+{
+  "name": "parapluie-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker + Durable Object that pairs two Parapluie players online",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260930.2",
+    "typescript": "^5",
+    "wrangler": "^4"
+  }
+}

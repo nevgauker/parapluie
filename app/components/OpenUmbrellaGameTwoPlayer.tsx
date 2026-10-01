@@ -4,30 +4,33 @@ import VirtualDPad from './VirtualDPad';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
   drawDryZone, drawGoalMarker, drawWetOverlay, drawHud, drawPrompt, walkWidth,
-  type StreetView, type DryZone, type Ripple,
+  drawFloatTexts, tickFloatTexts,
+  type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
+import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
+import {
+  SQUARE_W, SQUARE_H, SQUARE_INSET, SQUARE_COVER_R, SQUARE_GOALS, TOGETHER_GRACE, ALONE_SHARE,
+  pickGoalSpot, type SquareGoalType,
+} from '../_lib/rules';
+import { makeRng, newSeed } from '../_lib/rng';
+import { WASD, ARROWS, pads, padPress, readStick, PAD_START } from '../_lib/input';
+import { PLAYERS, tag, drawTag, controlsText } from '../_lib/players';
+import { padFor } from '../_lib/seats';
+import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
+import Seats from './Seats';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number; }
-interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; pauseLeft: number; }
+interface Goal extends SquareGoalType { x: number; y: number; age: number; pulse: number; reached: boolean; pauseLeft: number; }
 interface Spark { x: number; y: number; vx: number; vy: number; life: number; emoji: string; }
 
 type GameState = 'menu' | 'playing' | 'dead';
 
-/** How far P2 can stray before the rain reaches them. */
-const COVER_R = 72;
 /** Drawn size of the canopy itself — the shelter circle is wider. */
 const CANOPY_R = 25;
-/** Pavement strip left either side of the open square. */
-const KERB_INSET = 66;
-
-const GOAL_TYPES = [
-  { emoji: '🐕', pts: 120, dur: 9, pause: 2.0 },
-  { emoji: '🍊', pts: 80,  dur: 7, pause: 1.5 },
-  { emoji: '🌸', pts: 60,  dur: 11, pause: 1.0 },
-  { emoji: '☕', pts: 70,  dur: 9, pause: 2.0 },
-  { emoji: '🚌', pts: 150, dur: 5, pause: 0.5 },
-  { emoji: '📬', pts: 50,  dur: 12, pause: 1.5 },
-];
+/** How hard a full stick pushes a walker, per 60 Hz frame, before difficulty. */
+const WALK_PUSH = 0.2;
+/** Velocity kept each 60 Hz frame. */
+const DAMP = 0.85;
 
 export default function OpenUmbrellaGameTwoPlayer() {
   const [gameState, setGameState] = useState<GameState>('menu');
@@ -40,43 +43,44 @@ export default function OpenUmbrellaGameTwoPlayer() {
   useEffect(() => { stateRef.current = { gameState }; }, [gameState]);
   useEffect(() => { isTouchRef.current = navigator.maxTouchPoints > 0; }, []);
 
-  const handleStart = () => { setGameState('playing'); };
   const handleRestart = () => { setGameState('playing'); };
   const handleMenu = () => { setGameState('menu'); };
 
   useEffect(() => {
     const canvas = ref.current!;
     const ctx = canvas.getContext('2d')!;
+    // A fixed logical arena, letterboxed by CSS: every screen plays the same square.
+    const W = SQUARE_W, H = SQUARE_H;
+    const R = SQUARE_COVER_R;
 
-    let W = 360, H = 540;
-    const setCanvasSize = () => {
-      const container = canvas.parentElement;
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        W = Math.max(rect.width, 1);
-        H = Math.max(rect.height, 1);
-        canvas.width = W;
-        canvas.height = H;
-      }
-    };
-    setCanvasSize();
     let raf = 0, t = 0, lastTs = 0;
-    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing';
+    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing', paused = false;
     let wx = W / 2, wy = H / 2, wvx = 0, wvy = 0;
     let fx = W / 2 + 30, fy = H / 2 + 30, fvx = 0, fvy = 0;
     const drops: Drop[] = [];
     let goals: Goal[] = [];
     let sparks: Spark[] = [];
+    let floats: FloatText[] = [];
     const ripples: Ripple[] = [];
     let difficulty = 1;
     let diffTimer = 0;
-    let bgOff = 0;
     // facing + walk-cycle state for the two figures
     let wAngle = 0, fAngle = 0, wPhase = 0, fPhase = 0;
+    // shared co-op scoring: the follower's streak multiplies goals collected together
+    const streak = newDryStreak();
+    let coveredAt = 0;
+    // every goal comes from this run's seed
+    const rng = makeRng(newSeed());
 
     // Keyboard input
     const KEYS = keysRef.current;
-    const onDown = (e: KeyboardEvent) => { KEYS[e.key] = true; };
+    const onDown = (e: KeyboardEvent) => {
+      KEYS[e.key] = true;
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      if (running && !e.repeat && PAUSE_KEYS.includes(e.key)) paused = !paused;
+    };
+    // Losing focus mid-run pauses it and lets go of every held key.
+    const stopWatching = watchFocus(KEYS, () => { if (running) paused = true; });
     const onUp = (e: KeyboardEvent) => { KEYS[e.key] = false; };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
@@ -87,16 +91,14 @@ export default function OpenUmbrellaGameTwoPlayer() {
     for (let i = 0; i < 90; i++) drops.push(newDrop(true));
 
     function spawnGoal() {
-      const type = GOAL_TYPES[Math.floor(Math.random() * GOAL_TYPES.length)];
-      let gx = 0, gy = 0, tries = 0;
-      do { gx = 50 + Math.random() * (W - 100); gy = 50 + Math.random() * (H - 100); tries++; }
-      while (tries < 20 && Math.hypot(gx - wx, gy - wy) < 90 && Math.hypot(gx - fx, gy - fy) < 90);
-      goals.push({ ...type, x: gx, y: gy, age: 0, pulse: 0, reached: false, pauseLeft: 0 });
+      const type = SQUARE_GOALS[Math.floor(rng() * SQUARE_GOALS.length)];
+      const at = pickGoalSpot(rng, { x: wx, y: wy }, 110);
+      goals.push({ ...type, x: at.x, y: at.y, age: 0, pulse: 0, reached: false, pauseLeft: 0 });
     }
     spawnGoal(); spawnGoal();
 
     function update(dt: number) {
-      t += dt; elapsed += dt; bgOff = (bgOff + 0.8) % 80;
+      t += dt; elapsed += dt;
       diffTimer += dt;
       if (diffTimer > 15) { diffTimer = 0; difficulty = Math.min(3, difficulty + 0.15); }
       const pwx = wx, pwy = wy, pfx = fx, pfy = fy;
@@ -105,35 +107,41 @@ export default function OpenUmbrellaGameTwoPlayer() {
 
       tickRipples(ripples, dt, 12, () => ({ x: Math.random() * W, y: Math.random() * H }));
 
-      // P1 (woman) - WASD
-      const p1spd = (3.5 + difficulty * 0.3) * dt * 60;
-      if (KEYS['a'] || KEYS['A']) wvx -= p1spd * 0.2;
-      if (KEYS['d'] || KEYS['D']) wvx += p1spd * 0.2;
-      if (KEYS['w'] || KEYS['W']) wvy -= p1spd * 0.2;
-      if (KEYS['s'] || KEYS['S']) wvy += p1spd * 0.2;
-      wvx *= 0.85; wvy *= 0.85; wx += wvx; wy += wvy;
+      // Movement scales with frame time, so a 144 Hz screen turns no sharper than a 60 Hz one.
+      const f = dt * 60, keep = Math.pow(DAMP, f);
+      const push = WALK_PUSH * (3.5 + difficulty * 0.3) * f;
+
+      // P1 (woman) - WASD or the first gamepad
+      const p1 = readStick(KEYS, WASD, padFor('p1'));
+      wvx = (wvx + p1.x * push) * keep; wvy = (wvy + p1.y * push) * keep;
+      wx += wvx * f; wy += wvy * f;
       wx = Math.max(20, Math.min(W - 20, wx)); wy = Math.max(20, Math.min(H - 20, wy));
 
-      // P2 (follower) - Arrow keys
-      const p2spd = (3.5 + difficulty * 0.3) * dt * 60;
-      if (KEYS['ArrowLeft']) fvx -= p2spd * 0.2;
-      if (KEYS['ArrowRight']) fvx += p2spd * 0.2;
-      if (KEYS['ArrowUp']) fvy -= p2spd * 0.2;
-      if (KEYS['ArrowDown']) fvy += p2spd * 0.2;
-      fvx *= 0.85; fvy *= 0.85; fx += fvx; fy += fvy;
+      // P2 (follower) - arrow keys or the second gamepad
+      const p2 = readStick(KEYS, ARROWS, padFor('p2'));
+      fvx = (fvx + p2.x * push) * keep; fvy = (fvy + p2.y * push) * keep;
+      fx += fvx * f; fy += fvy * f;
       fx = Math.max(20, Math.min(W - 20, fx)); fy = Math.max(20, Math.min(H - 20, fy));
 
-      // Goals - collect by either player
+      const sep = Math.hypot(fx - wx, fy - wy);
+      if (sep <= R) coveredAt = elapsed;
+
+      // Goals - either player collects; full value, times the streak, only together
       for (const g of goals) {
         g.age += dt; g.pulse = (g.pulse + dt * 3) % (Math.PI * 2);
         const d1 = Math.hypot(wx - g.x, wy - g.y);
         const d2 = Math.hypot(fx - g.x, fy - g.y);
         if (!g.reached && g.pauseLeft <= 0 && (d1 < 20 || d2 < 20)) {
-          g.reached = true; g.pauseLeft = g.pause; score += Math.round(g.pts * difficulty);
+          g.reached = true; g.pauseLeft = g.pause;
+          const together = elapsed - coveredAt <= TOGETHER_GRACE;
+          const pts = Math.round(g.pts * difficulty * (together ? streak.mult : ALONE_SHARE));
+          score += pts;
           const collector = d1 < d2 ? { x: wx, y: wy } : { x: fx, y: fy };
+          floats.push({ x: collector.x, y: collector.y - 34, text: together ? `+${pts} ${g.label}` : `+${pts} alone`, color: together ? PALETTE.cream : '#ef5844', life: 1.2 });
           sparks.push(...Array.from({ length: 5 }, () => ({ x: collector.x, y: collector.y, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: g.emoji })));
         }
-        if (g.pauseLeft > 0) { g.pauseLeft -= dt; wvx *= 0.8; wvy *= 0.8; fvx *= 0.8; fvy *= 0.8; }
+        // she lingers at a goal; the follower is never slowed, only she is
+        if (g.pauseLeft > 0) { g.pauseLeft -= dt; wvx *= Math.pow(0.8, f); wvy *= Math.pow(0.8, f); }
       }
       goals = goals.filter(g => g.reached || g.age < g.dur);
       // Top up after both collection and expiry, or a run where every goal
@@ -148,9 +156,14 @@ export default function OpenUmbrellaGameTwoPlayer() {
       wPhase += (0.6 + wStep * 6) * dt * 5;
       fPhase += (0.6 + fStep * 6) * dt * 5;
 
+      // the follower's streak and close calls feed the shared score
+      const edge = tickDryStreak(streak, sep, R, dt, difficulty);
+      score += edge.pts;
+      floats.push(...streakCallouts(edge.events, fx, fy));
+      floats = tickFloatTexts(floats, dt);
+
       // wetness - based on separation
-      const sep = Math.hypot(fx - wx, fy - wy);
-      if (sep > COVER_R) wet = Math.min(1, wet + dt * 0.18); else wet = Math.max(0, wet - dt * 0.05);
+      if (sep > R) wet = Math.min(1, wet + dt * 0.18); else wet = Math.max(0, wet - dt * 0.05);
 
       sparks.forEach(s => { s.x += s.vx; s.y += s.vy; s.life -= dt * 1.5; });
       sparks = sparks.filter(s => s.life > 0);
@@ -162,19 +175,18 @@ export default function OpenUmbrellaGameTwoPlayer() {
       }
     }
 
-    function draw() {
-      const inset = Math.min(KERB_INSET, W * 0.16);
-      const view: StreetView = {
-        W, H, left: inset, right: W - inset, scroll: 0,
-        walk: walkWidth(W, W - inset * 2),
-      };
+    const view: StreetView = {
+      W, H, left: SQUARE_INSET, right: W - SQUARE_INSET, scroll: 0,
+      walk: walkWidth(W, W - SQUARE_INSET * 2),
+    };
 
+    function draw() {
       ctx.clearRect(0, 0, W, H);
       drawGround(ctx, view);
       drawProps(ctx, view, 0, t);
 
       const sep = Math.hypot(fx - wx, fy - wy);
-      const dry: DryZone[] = [{ x: wx, y: wy, r: COVER_R }];
+      const dry: DryZone[] = [{ x: wx, y: wy, r: R }];
 
       drawRipples(ctx, ripples, undefined, dry);
 
@@ -183,19 +195,18 @@ export default function OpenUmbrellaGameTwoPlayer() {
         drawGoalMarker(ctx, g.x, g.y, g.emoji, 1 - g.age / g.dur, g.pulse, g.age * 2);
       }
 
-      drawDryZone(ctx, wx, wy, COVER_R, sep / COVER_R);
+      drawDryZone(ctx, wx, wy, R, sep / R, streak.mult);
 
-      drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
+      drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent: PLAYERS.p2.color }, {
         angle: fAngle, phase: fPhase, wet,
       });
-      drawWalker(ctx, wx, wy, { jacket: PALETTE.jacketBlue, accent: '#7cc24f' }, {
+      drawWalker(ctx, wx, wy, { jacket: PALETTE.jacketBlue, accent: PLAYERS.p1.color }, {
         angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06,
       });
 
       // player tags, kept clear of the canopy
-      ctx.font = '500 9px Inter,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillStyle = 'rgba(124,194,79,.6)'; ctx.fillText('P1', wx, wy - CANOPY_R - 6);
-      ctx.fillStyle = 'rgba(224,138,60,.6)'; ctx.fillText('P2', fx, fy - 16);
+      drawTag(ctx, 'p1', wx, wy - CANOPY_R - 12);
+      drawTag(ctx, 'p2', fx, fy - 16);
 
       drawRainField(ctx, drops, H, undefined, dry);
 
@@ -206,63 +217,93 @@ export default function OpenUmbrellaGameTwoPlayer() {
         ctx.fillText(s.emoji, s.x, s.y); ctx.restore();
       }
 
+      drawFloatTexts(ctx, floats);
       drawWetOverlay(ctx, W, H, fx, fy, wet);
-      drawHud(ctx, W, score, wet, 54);
+      drawHud(ctx, W, score, wet, 54, streak.mult);
 
-      if (!running) {
+      // the menu overlay has its own instructions; the prompt is for after Start
+      if (!running && stateRef.current.gameState !== 'menu') {
         drawPrompt(
           ctx, W, H,
-          isTouchRef.current ? 'tap to start' : 'click to start',
-          isTouchRef.current ? 'use the D-pads to move' : 'P1: WASD · P2: Arrow keys',
+          pads().length ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
+          controlsText(isTouchRef.current),
         );
+      } else if (paused) {
+        drawPrompt(ctx, W, H, 'paused', 'Esc, P or Start to resume');
       }
     }
+
+    // Pads: A or Start begins a run or plays again; Start pauses. On the menu
+    // the seats take the pad instead, so pressing A there sits you down first.
+    const pressedStart = padPress();
+    const pressedPause = padPress([PAD_START]);
 
     function loop(ts: number) {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
       lastTs = ts;
-      if (running) update(dt);
+      const start = pressedStart(), pause = pressedPause();
+      const state = stateRef.current.gameState;
+      if (state === 'dead' && start) setGameState('playing');
+      else if (state === 'playing') {
+        if (!running && start) running = true;
+        else if (running && (pause || (paused && start))) paused = !paused;
+      }
+      if (running && !paused) update(dt);
       draw();
       raf = requestAnimationFrame(loop);
     }
     lastTs = performance.now();
     raf = requestAnimationFrame(loop);
 
-    const handleResize = () => {
-      setCanvasSize();
-    };
-    window.addEventListener('resize', handleResize);
-    canvas.addEventListener('click', () => { running = true; });
+    canvas.addEventListener('click', () => { if (stateRef.current.gameState === 'playing') running = true; });
 
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
+      stopWatching();
     };
   }, [gameState]);
 
   return (
-    <div className="relative w-full h-full">
+    <div className="relative w-full h-full" style={{ background: PALETTE.night }}>
       <canvas
         ref={ref}
+        width={SQUARE_W}
+        height={SQUARE_H}
         className="block w-full h-full"
-        style={{ cursor: 'default', display: 'block', touchAction: 'none' }}
+        style={{ cursor: 'default', display: 'block', touchAction: 'none', objectFit: 'contain' }}
       />
       <VirtualDPad
         keysRef={keysRef}
         keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
         position="left"
-        color="#7cc24f"
-        label="P1"
+        color={PLAYERS.p1.color}
+        label={tag('p1')}
       />
       <VirtualDPad
         keysRef={keysRef}
         keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }}
         position="right"
-        color="#e08a3c"
-        label="P2"
+        color={PLAYERS.p2.color}
+        label={tag('p2')}
       />
+
+      {gameState === 'menu' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', padding: '0 20px' }}>
+          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 28, fontWeight: 700, color: 'var(--fog)', marginBottom: 6 }}>Together</p>
+          <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.4)', marginBottom: 24, textAlign: 'center', lineHeight: 1.7 }}>
+            ● P1 holds the umbrella and chases goals. ◆ P2 follows.
+            <br />
+            Goals pay full only while P2 is dry.
+          </p>
+          <div style={{ marginBottom: 20 }}>
+            <Seats onStart={handleRestart} />
+          </div>
+          <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: 'var(--foliage)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start</button>
+          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.3)', marginTop: 14 }}>Esc, P or Start pauses.</p>
+        </div>
+      )}
 
       {gameState === 'dead' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.82)' }}>
