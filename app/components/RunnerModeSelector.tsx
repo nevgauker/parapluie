@@ -14,6 +14,7 @@ export default function RunnerModeSelector({ play }: { play?: Play }) {
       title="Runner"
       blurb={<>The street scrolls up.<br />Dodge obstacles. Stay dry.</>}
       play={play}
+      online="runner"
       solo={{
         title: 'Solo',
         desc: 'Mouse or touch\nYou follow; she chases goals\nThree cities, three hazards',

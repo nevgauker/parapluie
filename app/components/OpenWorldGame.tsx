@@ -14,6 +14,7 @@ export default function OpenWorldGame({ play }: { play?: Play }) {
       title="Open World"
       blurb={<>Follow the woman with the umbrella.<br />Chase goals. Don&apos;t get wet.</>}
       play={play}
+      online="open-world"
       solo={{
         title: 'Solo',
         desc: 'Mouse or touch\nYou follow; she chases goals',

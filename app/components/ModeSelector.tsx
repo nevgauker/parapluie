@@ -1,7 +1,10 @@
 'use client';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { type Play } from '../_lib/play';
+import { newCode } from '../_lib/online/client';
+import type { OnlineMode } from '../_lib/online/protocol';
 
 interface Option { title: string; desc: string; color: string; game: ReactNode }
 
@@ -10,7 +13,7 @@ interface Option { title: string; desc: string; color: string; game: ReactNode }
  * (?play=solo / ?play=local), so Back returns to this menu, a refresh keeps
  * your game, and a link can open a mode directly.
  */
-export default function ModeSelector({ base, title, blurb, play, solo, local }: {
+export default function ModeSelector({ base, title, blurb, play, solo, local, online }: {
   /** the page's own path, for the back link */
   base: string;
   title: string;
@@ -18,7 +21,10 @@ export default function ModeSelector({ base, title, blurb, play, solo, local }: 
   play: Play | undefined;
   solo: Option;
   local: Option;
+  /** the online mode a fresh room opens in */
+  online: OnlineMode;
 }) {
+  const router = useRouter();
   const chosen = play === 'solo' ? solo : play === 'local' ? local : null;
 
   if (chosen) {
@@ -80,6 +86,16 @@ export default function ModeSelector({ base, title, blurb, play, solo, local }: 
             <div style={{ fontSize: 'clamp(10px, 2.5vw, 11px)', color: 'rgba(240,236,224,.5)', lineHeight: 1.7, whiteSpace: 'pre-line', marginTop: 8 }}>{option.desc}</div>
           </Link>
         ))}
+        <button
+          onClick={() => router.push(`/r/${newCode()}?new=${online}`)}
+          style={{
+            padding: 'clamp(14px, 3.5vw, 20px) clamp(20px, 5vw, 28px)', borderRadius: 12, cursor: 'pointer',
+            background: 'rgba(240,236,224,0.05)', border: '1px dashed rgba(240,236,224,0.25)', textAlign: 'center', fontFamily: 'inherit',
+          }}
+        >
+          <div style={{ fontSize: 'clamp(14px, 4vw, 16px)', fontWeight: 600, color: 'var(--fog)', marginBottom: 6, fontFamily: "'Space Grotesk',sans-serif" }}>With a friend online</div>
+          <div style={{ fontSize: 'clamp(10px, 2.5vw, 11px)', color: 'rgba(240,236,224,.5)', lineHeight: 1.7 }}>Send a link. They play on their own device.</div>
+        </button>
       </div>
 
       <p style={{ fontSize: 11, color: 'rgba(240,236,224,.3)' }}>choose how to play</p>

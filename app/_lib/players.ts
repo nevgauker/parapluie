@@ -43,16 +43,20 @@ export function controlsText(touch = false) {
   return `${controlsLine('p1', touch)} · ${controlsLine('p2', touch)}`;
 }
 
-/** Draw a player's tag above a walker on a canvas: bigger and opaque so it reads at a glance. */
-export function drawTag(ctx: CanvasRenderingContext2D, p: Player, x: number, y: number) {
+/**
+ * Draw a player's tag above a walker on a canvas: bigger and opaque so it
+ * reads at a glance. `label` replaces "P1"/"P2", e.g. with a name online.
+ */
+export function drawTag(ctx: CanvasRenderingContext2D, p: Player, x: number, y: number, label?: string) {
+  const text = label ? `${PLAYERS[p].shape} ${label}` : tag(p);
   ctx.save();
   ctx.font = '600 11px Inter,sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'bottom';
   ctx.lineWidth = 3;
   ctx.strokeStyle = 'rgba(10,13,16,0.65)';
-  ctx.strokeText(tag(p), x, y);
+  ctx.strokeText(text, x, y);
   ctx.fillStyle = PLAYERS[p].color;
-  ctx.fillText(tag(p), x, y);
+  ctx.fillText(text, x, y);
   ctx.restore();
 }

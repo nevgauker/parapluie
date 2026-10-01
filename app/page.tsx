@@ -2,6 +2,7 @@
 
 import { StreetBackdrop, AnimatedTitle } from './components/HeroClient';
 import Link from 'next/link';
+import JoinRoom from './components/JoinRoom';
 
 /**
  * Modes share the game's palette: foliage green for the open square, the
@@ -227,6 +228,7 @@ export default function Home() {
             ))}
 
           </div>
+          <JoinRoom />
         </div>
       </section>
 

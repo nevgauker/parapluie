@@ -17,6 +17,8 @@ import { PLAYERS, PLAYER_IDS, other, tag, drawTag, type Player } from '../_lib/p
 import { padFor } from '../_lib/seats';
 import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
 import Seats from './Seats';
+import { useRouter } from 'next/navigation';
+import { newCode } from '../_lib/online/client';
 
 // ── types ──────────────────────────────────────────────────────────────────
 interface Drop  { x:number; y:number; len:number; spd:number; a:number }
@@ -347,6 +349,8 @@ export default function TwoPlayerGame() {
     };
   }, []);
 
+  const router = useRouter();
+
   // ── React handlers ──
   const [seed, setSeed] = useState(0);
   const startMatch = () => {
@@ -459,7 +463,10 @@ export default function TwoPlayerGame() {
           <button onClick={startMatch} style={{ padding:'13px 44px', borderRadius:28, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:15, fontWeight:500, cursor:'pointer', fontFamily:'inherit', marginBottom:10 }}>
             Start — coin flip for the umbrella
           </button>
-          <p style={{ fontSize:11, color:'rgba(240,236,224,.3)' }}>or press A on a gamepad</p>
+          <p style={{ fontSize:11, color:'rgba(240,236,224,.3)', marginBottom:14 }}>or press A on a gamepad</p>
+          <button onClick={() => router.push(`/r/${newCode()}?new=duel`)} style={{ padding:'8px 20px', borderRadius:20, background:'transparent', color:'rgba(240,236,224,.6)', border:'.5px solid rgba(240,236,224,.25)', fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+            Play online with a friend instead
+          </button>
         </div>
       )}
 
