@@ -132,12 +132,13 @@ export default function OpenUmbrellaGameTwoPlayer() {
           g.reached = true; g.pauseLeft = g.pause; score += Math.round(g.pts * difficulty);
           const collector = d1 < d2 ? { x: wx, y: wy } : { x: fx, y: fy };
           sparks.push(...Array.from({ length: 5 }, () => ({ x: collector.x, y: collector.y, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: g.emoji })));
-          spawnGoal();
-          if (goals.filter(g => !g.reached).length < 2) spawnGoal();
         }
         if (g.pauseLeft > 0) { g.pauseLeft -= dt; wvx *= 0.8; wvy *= 0.8; fvx *= 0.8; fvy *= 0.8; }
       }
       goals = goals.filter(g => g.reached || g.age < g.dur);
+      // Top up after both collection and expiry, or a run where every goal
+      // fades uncollected leaves nothing on the board.
+      while (goals.filter(g => !g.reached).length < 2) spawnGoal();
 
       // facing + stride
       const wStep = Math.hypot(wx - pwx, wy - pwy);

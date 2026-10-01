@@ -69,7 +69,9 @@ export default function RunnerGameSolo() {
     let worldY = 0;
     let wx = W / 2, wy = 0, wvx = 0, wvy = 0;
     let fx = W / 2, fy = 80;
-    let fTargetX = fx, fTargetY = fy;
+    // The pointer target lives in screen space: the street keeps scrolling
+    // under a still mouse, and the follower should keep walking with it.
+    let fTargetX = fx, fTargetSY = fy + H / 2;
     const drops: Drop[] = [];
     let goals: Goal[] = [];
     let sparks: Spark[] = [];
@@ -109,11 +111,36 @@ export default function RunnerGameSolo() {
       obstacles.push({ id: obstacleId++, x: ox, y: oy, w: obs.w, h: obs.h, emoji: obs.emoji });
     }
 
+    /**
+     * Where a walker of radius r has to stand to clear an obstacle, or null if
+     * they already do. Takes the shortest way out that stays on the road and
+     * on screen, so nobody gets shoved off the bottom edge and then clamped
+     * straight back inside the obstacle.
+     */
+    function pushOut(x: number, y: number, r: number, o: Obstacle) {
+      const cx = Math.max(o.x, Math.min(x, o.x + o.w));
+      const cy = Math.max(o.y, Math.min(y, o.y + o.h));
+      if (Math.hypot(x - cx, y - cy) >= r) return null;
+      const { left, right } = edges();
+      const top = worldY - H / 2 + 40, bottom = worldY + H / 2 - 40;
+      const exits = [
+        { x: o.x - r, y }, { x: o.x + o.w + r, y },
+        { x, y: o.y - r }, { x, y: o.y + o.h + r },
+      ].filter(p => p.x >= left + r && p.x <= right - r && p.y >= top && p.y <= bottom);
+      if (!exits.length) return null;
+      return exits.reduce((a, b) => Math.hypot(a.x - x, a.y - y) <= Math.hypot(b.x - x, b.y - y) ? a : b);
+    }
+
     function update(dt: number) {
       t += dt; elapsed += dt; diffTimer += dt;
       if (diffTimer > 12) { diffTimer = 0; difficulty = Math.min(3, difficulty + 0.2); }
 
-      worldY -= (1.5 + difficulty * 0.4) * dt * 60;
+      const scroll = (1.5 + difficulty * 0.4) * dt * 60;
+      worldY -= scroll;
+      // Both walkers move forward with the street; their own velocities only
+      // steer them around the frame.
+      wy -= scroll;
+      fy -= scroll;
 
       for (const d of drops) {
         d.y += d.spd * (1 + difficulty * 0.2);
@@ -156,6 +183,8 @@ export default function RunnerGameSolo() {
           const repel = (avoidDist - dist) / avoidDist * 0.12;
           wvx += (dx / dist) * repel;
           wvy += (dy / dist) * repel;
+          // Straight behind it the repel only pushes her back; sidestep instead.
+          if (dy > 0 && Math.abs(dx) < 1) wvx += (wx < obs.x + obs.w / 2 ? -1 : 1) * repel;
         }
       });
 
@@ -165,30 +194,19 @@ export default function RunnerGameSolo() {
       wy = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, wy));
 
       // Follower - player controlled via mouse (just follows)
+      const fTargetY = worldY - H / 2 + fTargetSY;
       fx += (fTargetX - fx) * 0.12;
       fy += (fTargetY - fy) * 0.12;
       fx = Math.max(streetLeft + 15, Math.min(streetRight - 15, fx));
       fy = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, fy));
 
-      // Obstacle collision - accurate circle-to-rectangle
-      obstacles.forEach((obs) => {
-        const circleToRect = (cx: number, cy: number, radius: number): boolean => {
-          const closestX = Math.max(obs.x, Math.min(cx, obs.x + obs.w));
-          const closestY = Math.max(obs.y, Math.min(cy, obs.y + obs.h));
-          const dx = cx - closestX;
-          const dy = cy - closestY;
-          return dx * dx + dy * dy < radius * radius;
-        };
-
-        if (circleToRect(wx, wy, 20)) {
-          wx -= wvx * 0.8; wy -= wvy * 0.8;
-          wvx *= -0.5; wvy *= -0.5;
-        }
-        if (circleToRect(fx, fy, 15)) {
-          fx -= (fTargetX - fx) * 0.3;
-          fy -= (fTargetY - fy) * 0.3;
-        }
-      });
+      // Obstacles are solid: step both walkers back out of any they overlap.
+      for (const obs of obstacles) {
+        const w = pushOut(wx, wy, 20, obs);
+        if (w) { wx = w.x; wy = w.y; wvx *= 0.5; wvy *= 0.5; }
+        const f = pushOut(fx, fy, 15, obs);
+        if (f) { fx = f.x; fy = f.y; }
+      }
 
       // Facing and stride: the street itself is moving, so both figures keep
       // walking even when the player holds still.
@@ -226,7 +244,8 @@ export default function RunnerGameSolo() {
         spawnObstacle();
         obstacleTimer = 4 / difficulty;
       }
-      obstacles = obstacles.filter(o => o.y > worldY - H - 100);
+      // Drop obstacles once they've scrolled off the bottom.
+      obstacles = obstacles.filter(o => o.y < worldY + H / 2 + 100);
 
       // Wetness - safe while inside the umbrella's cover
       const sep = Math.hypot(fx - wx, fy - wy);
@@ -322,14 +341,14 @@ export default function RunnerGameSolo() {
       if (!running) return;
       const rect = canvas.getBoundingClientRect();
       fTargetX = (e.clientX - rect.left) / (rect.width / W);
-      fTargetY = worldY - H / 2 + (e.clientY - rect.top) / (rect.height / H);
+      fTargetSY = (e.clientY - rect.top) / (rect.height / H);
     };
     const handleTouchMove = (e: TouchEvent) => {
       if (!running) return;
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       fTargetX = (e.touches[0].clientX - rect.left) / (rect.width / W);
-      fTargetY = worldY - H / 2 + (e.touches[0].clientY - rect.top) / (rect.height / H);
+      fTargetSY = (e.touches[0].clientY - rect.top) / (rect.height / H);
     };
 
     window.addEventListener('resize', handleResize);

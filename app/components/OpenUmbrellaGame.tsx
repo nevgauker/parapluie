@@ -124,8 +124,6 @@ export default function OpenUmbrellaGame() {
         else {
           ag.reached = true; ag.pauseLeft = ag.pause; score += Math.round(ag.pts * difficulty);
           sparks.push(...Array.from({ length: 5 }, () => ({ x: wx, y: wy, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: ag.emoji })));
-          spawnGoal();
-          if (goals.filter(g => !g.reached).length < 2) spawnGoal();
         }
       } else if (ag && ag.pauseLeft > 0) { ag.pauseLeft -= dt; wvx *= 0.8; wvy *= 0.8; }
 
@@ -135,6 +133,9 @@ export default function OpenUmbrellaGame() {
 
       for (const g of goals) { g.age += dt; g.pulse = (g.pulse + dt * 3) % (Math.PI * 2); }
       goals = goals.filter(g => g.reached || g.age < g.dur);
+      // Top up after both reaching and expiry, or a run where every goal
+      // fades unreached leaves her nothing to walk to.
+      while (goals.filter(g => !g.reached).length < 2) spawnGoal();
 
       // follower
       fx += (fTargetX - fx) * 0.12;

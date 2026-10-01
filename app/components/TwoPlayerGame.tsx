@@ -34,6 +34,8 @@ export default function TwoPlayerGame() {
 
   const [screen,    setScreen]    = useState<Screen>('menu');
   const [endData,   setEndData]   = useState({ wScore:0, fScore:0, time:0, wet:0 });
+  // Live round numbers for the HUD, pushed from the canvas loop at ~10 Hz.
+  const [hud,       setHud]       = useState({ wScore:0, fScore:0, wet:0 });
   const [isTouchDevice, setIsTouchDevice] = useState(false);
 
   // live refs so canvas loop can read without stale closure
@@ -53,7 +55,7 @@ export default function TwoPlayerGame() {
     let wx=W/2, wy=H*.42, wvx=0, wvy=0;
     let fx=W/2+40, fy=H*.56, fvx=0, fvy=0;
     let wet=0, wScore=0, fScore=0, elapsed=0;
-    let difficulty=1, diffTimer=0, goalTimer=0, bgOff=0;
+    let difficulty=1, diffTimer=0, goalTimer=0, bgOff=0, hudTimer=0;
     let goals:Goal[]=[], drops:Drop[]=[], sparks:Spark[]=[];
     let ripples:Ripple[]=[];
     let wAngle=0, fAngle=0, wPhase=0, fPhase=0;
@@ -89,7 +91,8 @@ export default function TwoPlayerGame() {
       wx=W/2; wy=H*.42; wvx=0; wvy=0;
       fx=W/2+40; fy=H*.56; fvx=0; fvy=0;
       wet=0; wScore=0; fScore=0; elapsed=0;
-      difficulty=1; diffTimer=0; goalTimer=0; bgOff=0;
+      difficulty=1; diffTimer=0; goalTimer=0; bgOff=0; hudTimer=0;
+      setHud({ wScore:0, fScore:0, wet:0 });
       goals=[]; sparks=[]; ripples=[];
       wAngle=0; fAngle=0; wPhase=0; fPhase=0;
       drops = Array.from({length:100}, ()=>newDrop(true));
@@ -161,6 +164,9 @@ export default function TwoPlayerGame() {
       // sparks
       for (const s of sparks) { s.x+=s.vx; s.y+=s.vy; s.vy+=.1; s.life-=dt*1.4; }
       sparks = sparks.filter(s=>s.life>0);
+
+      hudTimer+=dt;
+      if (hudTimer>.1) { hudTimer=0; setHud({ wScore, fScore, wet }); }
 
       if (wet>=1) {
         active=false;
@@ -322,18 +328,18 @@ export default function TwoPlayerGame() {
           <div className="flex justify-between items-start">
             <div>
               <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:'#7cc24f' }}>P2 — Woman</div>
-              <div style={{ fontSize:22, fontWeight:700, color:'var(--fog)', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(endData.wScore)}</div>
+              <div style={{ fontSize:22, fontWeight:700, color:'var(--fog)', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(hud.wScore)}</div>
               <div style={{ fontSize:10, color:'rgba(240,236,224,.3)' }}>{isTouchDevice ? 'goals · D-pad' : 'goals · arrows'}</div>
             </div>
             <div style={{ textAlign:'center' }}>
               <div style={{ fontSize:10, color:'rgba(240,236,224,.35)', marginBottom:3 }}>wetness</div>
               <div style={{ width:80, height:5, background:'rgba(255,255,255,.1)', borderRadius:3, overflow:'hidden', margin:'0 auto' }}>
-                <div style={{ height:'100%', borderRadius:3, transition:'width .1s, background .2s', width:`${endData.wet*100}%`, background: endData.wet>.65?'#ef4444':endData.wet>.3?'#EF9F27':'#378ADD' }} />
+                <div style={{ height:'100%', borderRadius:3, transition:'width .1s, background .2s', width:`${hud.wet*100}%`, background: hud.wet>.65?'#ef4444':hud.wet>.3?'#EF9F27':'#378ADD' }} />
               </div>
             </div>
             <div style={{ textAlign:'right' }}>
               <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:'#e08a3c' }}>P1 — Follower</div>
-              <div style={{ fontSize:22, fontWeight:700, color:'var(--fog)', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(endData.fScore)}</div>
+              <div style={{ fontSize:22, fontWeight:700, color:'var(--fog)', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{Math.round(hud.fScore)}</div>
               <div style={{ fontSize:10, color:'rgba(240,236,224,.3)' }}>{isTouchDevice ? 'survive · D-pad' : 'survive · WASD'}</div>
             </div>
           </div>
