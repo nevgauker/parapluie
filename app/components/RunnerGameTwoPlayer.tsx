@@ -17,6 +17,7 @@ import { padFor } from '../_lib/seats';
 import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
 import Seats from './Seats';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
+import { sound, playStreak, playCue } from '../_lib/sound';
 import { TOGETHER_GRACE, ALONE_SHARE } from '../_lib/rules';
 import { makeRng, newSeed } from '../_lib/rng';
 
@@ -86,6 +87,8 @@ export default function RunnerGameTwoPlayer() {
     // shared co-op scoring: the follower's streak multiplies goals collected together
     const streak = newDryStreak();
     let coveredAt = 0;
+    // was a walker already pressed against an obstacle last frame
+    let bumping = false;
     const furnish = cityFurnish(city);
     // the umbrella's dry spot, blown downwind by Tokyo's gusts
     let dryShift = 0;
@@ -178,12 +181,16 @@ export default function RunnerGameTwoPlayer() {
 
       // Obstacles are solid: step both walkers back out of any they overlap.
       const bounds = { left: streetLeft, right: streetRight, top: worldY - H / 2 + 40, bottom: worldY + H / 2 - 40 };
+      let hit = false;
       for (const obs of obstacles) {
         const w = pushOut(wx, wy, 20, obs, bounds);
-        if (w) { wx = w.x; wy = w.y; wvx *= 0.5; wvy *= 0.5; }
+        if (w) { wx = w.x; wy = w.y; wvx *= 0.5; wvy *= 0.5; hit = true; }
         const p = pushOut(fx, fy, 15, obs, bounds);
-        if (p) { fx = p.x; fy = p.y; fvx *= 0.5; fvy *= 0.5; }
+        if (p) { fx = p.x; fy = p.y; fvx *= 0.5; fvy *= 0.5; hit = true; }
       }
+      // a thud on first contact, not every frame spent leaning on it
+      if (hit && !bumping) sound.thud();
+      bumping = hit;
 
       // Facing and stride: the street itself is moving, so both figures keep
       // walking even when the players hold still.
@@ -210,6 +217,7 @@ export default function RunnerGameTwoPlayer() {
           const together = elapsed - coveredAt <= TOGETHER_GRACE;
           const pts = Math.round(g.pts * difficulty * (together ? streak.mult : ALONE_SHARE));
           score += pts;
+          sound.goal(streak.mult, !together);
           const collector = dw < df ? { x: wx, y: wy } : { x: fx, y: fy };
           floats.push({ x: collector.x, y: project(collector.y) - 34, text: together ? `+${pts}` : `+${pts} alone`, color: together ? PALETTE.cream : '#ef5844', life: 1.2 });
           sparks.push(...Array.from({ length: 5 }, () => ({ x: collector.x, y: collector.y, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: g.emoji })));
@@ -238,6 +246,9 @@ export default function RunnerGameTwoPlayer() {
       const edge = tickDryStreak(streak, weather.sheltered ? 0 : sep, coverR, dt, difficulty);
       score += edge.pts;
       floats.push(...streakCallouts(edge.events, fx, project(fy)));
+      playStreak(edge.events);
+      for (const c of weather.callouts) playCue(c.cue);
+      sound.rain(sep / coverR, weather.sheltered);
       if (sep > coverR && !weather.sheltered) wet = Math.min(1, wet + dt * 0.18 * cityConfig.soak);
       else wet = Math.max(0, wet - dt * 0.05);
       wet = Math.min(1, wet + weather.splash);
@@ -250,6 +261,7 @@ export default function RunnerGameTwoPlayer() {
       sparks = sparks.filter(s => s.life > 0);
 
       if (wet >= 1) {
+        sound.soaked();
         running = false;
         setEndStats({ score: Math.round(score), time: Math.round(elapsed) });
         setGameState('dead');

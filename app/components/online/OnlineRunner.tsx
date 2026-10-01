@@ -20,6 +20,7 @@ import { playTime, isPaused, type Match, type Seat, type GameMsg, type FollowerR
 import type { RoomClient } from '../../_lib/online/client';
 import { SnapBuffer, SNAP_EVERY_MS, INTERP_DELAY_MS } from '../../_lib/online/snaps';
 import { onlineStick, overlayText, SHAKY_MS, type OnlineResult } from './common';
+import { sound, playStreak, playCue } from '../../_lib/sound';
 import TouchStick from '../TouchStick';
 import type { Stick } from '../../_lib/input';
 
@@ -109,6 +110,7 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
     let report: FollowerReport = { wet: 0, mult: 1, coveredAt: -1e9, pts: 0 };
     const streak = newDryStreak();
     let lastTheirSnap = 0;
+    let bumping = false;
     let ended = false;
     let endInfo: { end: 'soaked' | 'home'; fScore: number; time: number } | null = null;
     let finalTimer: ReturnType<typeof setTimeout> | null = null;
@@ -119,6 +121,18 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
     const drops = Array.from({ length: city.rain }, () => newDrop());
     const ripples: Ripple[] = [];
     let raf = 0, last = performance.now(), sinceSnap = 0, t = 0;
+    let lastCount = 0;
+    /** Beep each second of a 3-2-1, and a higher one on go. */
+    function countdownBeeps(now: number, ms: number) {
+      const m = live();
+      const left = ms < 0 ? -ms : m.resumeAt !== null && now < m.resumeAt ? m.resumeAt - now : 0;
+      const n = left > 0 ? Math.ceil(left / 1000) : 0;
+      if (n !== lastCount) {
+        if (n > 0) sound.count();
+        else if (lastCount > 0) sound.count(true);
+        lastCount = n;
+      }
+    }
 
     function newDrop() {
       return { x: Math.random() * W, y: Math.random() * H, len: 10 + Math.random() * 14, spd: 4 + Math.random() * 3, a: 0.1 + Math.random() * 0.12 };
@@ -160,6 +174,7 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
       goals.delete(id);
       const at = by === seat ? { x: mx, y: my } : { x: rx, y: ry };
       floats.push({ x: at.x, y: project(at.y) - 34, text: together ? `+${pts}` : `+${pts} alone`, color: together ? PALETTE.cream : '#ef5844', life: 1.2 });
+      sound.goal(report.mult, !together);
       sparks.push(...Array.from({ length: 5 }, () => ({ x: at.x, y: at.y, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: g.emoji })));
     }
 
@@ -171,6 +186,7 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
     function endRound() {
       if (ended) return;
       ended = true;
+      sound.soaked();
       const time = Math.max(0, playTime(live(), client.now()) / 1000);
       endInfo = { end: 'soaked', fScore: report.pts, time };
       client.game({ k: 'round-end', end: 'soaked', fScore: report.pts, time });
@@ -195,6 +211,7 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
           case 'round-end':
             if (iHold && !ended) {
               ended = true;
+              sound.soaked();
               client.game({ k: 'final', wScore: Math.round(wScore) });
               finish(m.end, m.fScore, m.time, wScore);
             }
@@ -203,6 +220,7 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
             if (endInfo) finish(endInfo.end, endInfo.fScore, endInfo.time, m.wScore);
             break;
           case 'ping-call':
+            sound.call(m.by === umb);
             floats.push({ x: rx, y: project(ry) - 44, text: m.by === umb ? '☂ ring ring!' : 'Attends !', color: PLAYERS[m.by].color, life: 1.6 });
             break;
         }
@@ -217,6 +235,7 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
     };
     const call = () => {
       client.game({ k: 'ping-call', by: seat });
+      sound.call(iHold);
       floats.push({ x: mx, y: project(my) - 44, text: iHold ? '☂ ring ring!' : 'Attends !', color: PLAYERS[seat].color, life: 1.6 });
     };
     actionsRef.current = {
@@ -254,10 +273,14 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
       mx = Math.max(left + r, Math.min(right - r, mx));
       my = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, my));
       const bounds = { left, right, top: worldY - H / 2 + 40, bottom: worldY + H / 2 - 40 };
+      let hit = false;
       for (const o of obstacles) {
         const p = pushOut(mx, my, r, o, bounds);
-        if (p) { mx = p.x; my = p.y; mvx *= 0.5; mvy *= 0.5; }
+        if (p) { mx = p.x; my = p.y; mvx *= 0.5; mvy *= 0.5; hit = true; }
       }
+      // a thud on first contact, not every frame spent leaning on it
+      if (hit && !bumping) sound.thud();
+      bumping = hit;
       const stepLen = Math.hypot(mx - pmx, my - pmy + scrolled);
       if (stepLen > 0.35) mAngle = Math.atan2(my - pmy, mx - pmx) + Math.PI / 2;
       mPhase += (2 + stepLen * 6) * dt * 5;
@@ -277,6 +300,8 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
       if (covered) report.coveredAt = now;
       const edge = tickDryStreak(streak, weather.sheltered ? 0 : sep, coverR, dt, difficulty);
       floats.push(...streakCallouts(edge.events, mx, project(my)));
+      playStreak(edge.events);
+      sound.rain(sep / coverR, weather.sheltered);
       let wet = report.wet;
       if (!covered) wet = Math.min(1, wet + dt * 0.18 * city.soak);
       else wet = Math.max(0, wet - dt * 0.05);
@@ -350,6 +375,8 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
       const m = live();
       const ms = playTime(m, now);
       const running = ms >= 0 && !isPaused(m, now) && !ended;
+      countdownBeeps(now, ms);
+      if (running && iHold) sound.rain(0);
 
       if (pressedPause() && !ended && ms >= 0) togglePause();
       if (pressedCall() && running) call();
@@ -362,6 +389,8 @@ export default function OnlineRunner({ client, match, seat, onOver }: {
       while (steps < target && n++ < MAX_STEPS) step();
       const scrolled = before - worldY;
       if (!iHold) floats.push(...weather.callouts.map(c => ({ ...c, x: mx, y: project(my) - 44, life: 1.4 })));
+      // both players hear the city's hazards
+      for (const c of weather.callouts) playCue(c.cue);
 
       // their walker, a little in the past, carried along with the street
       const r = remote.sample(now - INTERP_DELAY_MS);

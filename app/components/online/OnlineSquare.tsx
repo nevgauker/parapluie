@@ -19,6 +19,7 @@ import { playTime, isPaused, type Match, type Seat, type GameMsg, type NetGoal, 
 import type { RoomClient } from '../../_lib/online/client';
 import { SnapBuffer, SNAP_EVERY_MS, INTERP_DELAY_MS } from '../../_lib/online/snaps';
 import { onlineStick, overlayText, SHAKY_MS, type OnlineResult } from './common';
+import { sound, playStreak } from '../../_lib/sound';
 import TouchStick from '../TouchStick';
 import type { Stick } from '../../_lib/input';
 
@@ -106,6 +107,18 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
     const drops = Array.from({ length: 90 }, () => newDrop(true));
     const ripples: Ripple[] = [];
     let raf = 0, last = performance.now(), sinceSnap = 0, t = 0;
+    let lastCount = 0;
+    /** Beep each second of a 3-2-1, and a higher one on go. */
+    function countdownBeeps(now: number, ms: number) {
+      const m = live();
+      const left = ms < 0 ? -ms : m.resumeAt !== null && now < m.resumeAt ? m.resumeAt - now : 0;
+      const n = left > 0 ? Math.ceil(left / 1000) : 0;
+      if (n !== lastCount) {
+        if (n > 0) sound.count();
+        else if (lastCount > 0) sound.count(true);
+        lastCount = n;
+      }
+    }
 
     function newDrop(anywhere = false) {
       return { x: Math.random() * W, y: anywhere ? Math.random() * H : -18, len: 10 + Math.random() * 14, spd: 4 + Math.random() * 3, a: 0.1 + Math.random() * 0.12 };
@@ -148,6 +161,7 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
       floats.push({ x: at.x, y: at.y - 34, text: together ? `+${pts} ${g.label}` : `+${pts} alone`, color: together ? PALETTE.cream : '#ef5844', life: 1.2 });
       sparks.push(...Array.from({ length: 6 }, () => ({ x: at.x, y: at.y, vx: (Math.random() - .5) * 4, vy: (Math.random() - .5) * 4, life: 1, emoji: g.emoji })));
       if (by === umb && iHold) pauseLeft = g.pause;
+      sound.goal(report.mult, !together);
     }
 
     // ── ending the round ──
@@ -161,6 +175,7 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
     function endRound(end: 'soaked' | 'home') {
       if (ended) return;
       ended = true;
+      if (end === 'soaked') sound.soaked(); else sound.home();
       const time = Math.max(0, pt());
       const fScore = report.pts + (duel && end === 'home' ? HOME_BONUS * difficultyAt(time) : 0);
       report = { ...report, pts: fScore };
@@ -192,6 +207,7 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
           case 'round-end':
             if (iHold && !ended) {
               ended = true;
+              if (m.end === 'soaked') sound.soaked(); else sound.home();
               if (duel && m.end === 'soaked') wScore += SHAKE_BONUS * difficultyAt(m.time);
               client.game({ k: 'final', wScore: Math.round(wScore) });
               finish(m.end, m.fScore, m.time, wScore);
@@ -201,6 +217,7 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
             if (endInfo) finish(endInfo.end, endInfo.fScore, endInfo.time, m.wScore);
             break;
           case 'ping-call':
+            sound.call(m.by === umb);
             floats.push({ x: rx, y: ry - 44, text: m.by === umb ? '☂ ring ring!' : 'Attends !', color: PLAYERS[m.by].color, life: 1.6 });
             break;
         }
@@ -215,6 +232,7 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
     };
     const call = () => {
       client.game({ k: 'ping-call', by: seat });
+      sound.call(iHold);
       floats.push({ x: mx, y: my - 44, text: iHold ? '☂ ring ring!' : 'Attends !', color: PLAYERS[seat].color, life: 1.6 });
     };
     actionsRef.current = {
@@ -285,6 +303,9 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
         }
       }
 
+      // the umbrella's holder is always under it
+      if (iHold) sound.rain(0);
+
       if (!iHold) {
         // the follower's device decides cover, against the umbrella as it sees her
         const sep = Math.hypot(mx - rx, my - ry);
@@ -293,6 +314,8 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
         let pts = report.pts + edge.pts;
         if (sep <= R && duel) pts += dt * COVER_PTS * d * streak.mult;
         floats.push(...streakCallouts(edge.events, mx, my));
+        playStreak(edge.events);
+        sound.rain(sep / R);
         let wet = report.wet;
         if (sep > R) wet = Math.min(1, wet + dt * (0.18 + (duel ? (sep - R) / R * 0.35 : 0)));
         else wet = Math.max(0, wet - dt * (duel ? 0.055 : 0.05));
@@ -378,6 +401,7 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
       const now = client.now();
       const secs = playTime(live(), now) / 1000;
       const running = secs >= 0 && !isPaused(live(), now);
+      countdownBeeps(now, secs * 1000);
 
       if (pressedPause() && !ended && secs >= 0) togglePause();
       if (pressedCall() && !ended && running) call();

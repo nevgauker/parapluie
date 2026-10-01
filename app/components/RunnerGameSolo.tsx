@@ -7,6 +7,7 @@ import {
   type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
+import { sound, playStreak, playCue } from '../_lib/sound';
 import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
 import { cityEvents } from '../_lib/cityEvents';
 import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
@@ -84,6 +85,8 @@ export default function RunnerGameSolo() {
     // her rhythm: walk to `target`, linger for pauseLeft, then dash for dashLeft
     let target: Goal | null = null;
     let pauseLeft = 0, dashLeft = 0;
+    // was the follower already pressed against an obstacle last frame
+    let bumping = false;
     // the follower's reward for playing the rim: multiplier + close-call bonus
     const streak = newDryStreak();
     // callouts live in screen space so they rise instead of scrolling away
@@ -214,12 +217,16 @@ export default function RunnerGameSolo() {
 
       // Obstacles are solid: step both walkers back out of any they overlap.
       const b = bounds();
+      let hit = false;
       for (const obs of obstacles) {
         const w = pushOut(wx, wy, 20, obs, b);
         if (w) { wx = w.x; wy = w.y; wvx *= 0.5; wvy *= 0.5; }
         const p = pushOut(fx, fy, 15, obs, b);
-        if (p) { fx = p.x; fy = p.y; }
+        if (p) { fx = p.x; fy = p.y; hit = true; }
       }
+      // a thud on first contact, not every frame spent leaning on it
+      if (hit && !bumping) sound.thud();
+      bumping = hit;
 
       // Facing and stride: the street itself is moving, so both figures keep
       // walking even when the player holds still.
@@ -242,6 +249,7 @@ export default function RunnerGameSolo() {
           pauseLeft = g.pause; dashLeft = 0; target = null;
           const pts = Math.round(g.pts * difficulty * streak.mult);
           score += pts;
+          sound.goal(streak.mult);
           floats.push({ x: wx, y: project(wy) - 30, text: `+${pts}`, color: PALETTE.cream, life: 1 });
           sparks.push(...Array.from({ length: 5 }, () => ({ x: wx, y: wy, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: g.emoji })));
           if (goals.filter(g => !g.reached).length < 3) spawnGoal();
@@ -269,6 +277,9 @@ export default function RunnerGameSolo() {
       score += edge.pts;
       floats.push(...streakCallouts(edge.events, fx, project(fy)));
       floats.push(...weather.callouts.map(c => ({ ...c, x: fx, y: project(fy) - 44, life: 1.4 })));
+      playStreak(edge.events);
+      for (const c of weather.callouts) playCue(c.cue);
+      sound.rain(sep / coverR, weather.sheltered);
       floats = tickFloatTexts(floats, dt);
       if (sep > coverR && !weather.sheltered) wet = Math.min(1, wet + dt * 0.15 * cityConfig.soak);
       else wet = Math.max(0, wet - dt * 0.08);
@@ -280,6 +291,7 @@ export default function RunnerGameSolo() {
       sparks = sparks.filter(s => s.life > 0);
 
       if (wet >= 1) {
+        sound.soaked();
         running = false;
         setEndStats({ score: Math.round(score), time: Math.round(elapsed) });
         setGameState('dead');
