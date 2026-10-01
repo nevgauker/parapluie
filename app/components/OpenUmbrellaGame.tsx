@@ -8,7 +8,7 @@ import {
 } from '../_lib/street';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number; }
-interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; pauseLeft: number; }
+interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; }
 interface Spark { x: number; y: number; vx: number; vy: number; life: number; emoji: string; }
 
 type GameState = 'menu' | 'playing' | 'dead';
@@ -19,6 +19,15 @@ const COVER_R = 72;
 const CANOPY_R = 25;
 /** Pavement strip left either side of the open square. */
 const KERB_INSET = 66;
+
+/** After lingering at a goal she sprints to the next one, this much faster... */
+const DASH_BOOST = 1.6;
+/** ...for this many seconds. */
+const DASH_TIME = 0.6;
+/** Follower top speed as a share of her dash: a dash you didn't see coming opens a gap. */
+const FOLLOW_MAX = 0.9;
+/** Her top speed in px per 60 Hz frame for each unit of walk speed (push 0.18, damping 0.86). */
+const TOP_SPEED = 0.18 * 0.86 / 0.14;
 
 const GOAL_TYPES = [
   { emoji: '🐕', pts: 120, dur: 9, pause: 2.0 },
@@ -72,6 +81,9 @@ export default function OpenUmbrellaGame() {
     let bgOff = 0;
     // facing + walk-cycle state for the two figures
     let wAngle = 0, fAngle = 0, wPhase = 0, fPhase = 0;
+    // her rhythm: walk to `target`, linger for pauseLeft, then dash for dashLeft
+    let target: Goal | null = null;
+    let pauseLeft = 0, dashLeft = 0;
 
     function newDrop(anywhere = false): Drop {
       return { x: Math.random() * W, y: anywhere ? Math.random() * H : -18, len: 10 + Math.random() * 14, spd: 4 + Math.random() * 3, a: 0.1 + Math.random() * 0.12 };
@@ -83,7 +95,7 @@ export default function OpenUmbrellaGame() {
       let gx = 0, gy = 0, tries = 0;
       do { gx = 50 + Math.random() * (W - 100); gy = 50 + Math.random() * (H - 100); tries++; }
       while (tries < 20 && Math.hypot(gx - wx, gy - wy) < 90);
-      goals.push({ ...type, x: gx, y: gy, age: 0, pulse: 0, reached: false, pauseLeft: 0 });
+      goals.push({ ...type, x: gx, y: gy, age: 0, pulse: 0, reached: false });
     }
     spawnGoal(); spawnGoal();
 
@@ -116,34 +128,54 @@ export default function OpenUmbrellaGame() {
 
       tickRipples(ripples, dt, 12, () => ({ x: Math.random() * W, y: Math.random() * H }));
 
-      // woman AI
-      const ag = goals.find(g => !g.reached);
-      if (ag && ag.pauseLeft <= 0) {
-        const dx = ag.x - wx, dy = ag.y - wy, dist = Math.hypot(dx, dy);
-        if (dist > 8) { const spd = 1.4 * (1 + difficulty * 0.3); wvx += (dx / dist) * spd * 0.18; wvy += (dy / dist) * spd * 0.18; }
-        else {
-          ag.reached = true; ag.pauseLeft = ag.pause; score += Math.round(ag.pts * difficulty);
-          sparks.push(...Array.from({ length: 5 }, () => ({ x: wx, y: wy, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: ag.emoji })));
-          spawnGoal();
-          if (goals.filter(g => !g.reached).length < 2) spawnGoal();
+      // woman AI: walk to a goal, linger there, then dash to the next one
+      const f = dt * 60;
+      const walk = 1.4 * (1 + difficulty * 0.3);
+      if (target && !goals.includes(target)) target = null;
+      if (!target) target = goals.find(g => !g.reached) ?? null;
+      if (pauseLeft > 0) {
+        pauseLeft -= dt;
+        if (pauseLeft <= 0) dashLeft = DASH_TIME;
+        wvx *= Math.pow(0.8, f); wvy *= Math.pow(0.8, f);
+      } else if (target) {
+        const dx = target.x - wx, dy = target.y - wy, dist = Math.hypot(dx, dy);
+        if (dist > 8) {
+          const spd = walk * (dashLeft > 0 ? DASH_BOOST : 1);
+          wvx += (dx / dist) * spd * 0.18 * f; wvy += (dy / dist) * spd * 0.18 * f;
+        } else {
+          target.reached = true; pauseLeft = target.pause; dashLeft = 0;
+          score += Math.round(target.pts * difficulty);
+          const emoji = target.emoji;
+          sparks.push(...Array.from({ length: 5 }, () => ({ x: wx, y: wy, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji })));
+          target = null;
         }
-      } else if (ag && ag.pauseLeft > 0) { ag.pauseLeft -= dt; wvx *= 0.8; wvy *= 0.8; }
+      }
+      if (pauseLeft <= 0) dashLeft = Math.max(0, dashLeft - dt);
 
-      wvx += (Math.random() - .5) * 0.06; wvy += (Math.random() - .5) * 0.06;
-      wvx *= 0.86; wvy *= 0.86; wx += wvx; wy += wvy;
+      wvx += (Math.random() - .5) * 0.06 * f; wvy += (Math.random() - .5) * 0.06 * f;
+      wvx *= Math.pow(0.86, f); wvy *= Math.pow(0.86, f); wx += wvx * f; wy += wvy * f;
       wx = Math.max(20, Math.min(W - 20, wx)); wy = Math.max(20, Math.min(H - 20, wy));
 
       for (const g of goals) { g.age += dt; g.pulse = (g.pulse + dt * 3) % (Math.PI * 2); }
-      goals = goals.filter(g => g.reached || g.age < g.dur);
+      goals = goals.filter(g => !g.reached && g.age < g.dur);
+      // Top up after both reaching and expiry, or a run where every goal
+      // fades unreached leaves her nothing to walk to.
+      while (goals.length < 2) spawnGoal();
 
-      // follower
-      fx += (fTargetX - fx) * 0.12;
-      fy += (fTargetY - fy) * 0.12;
+      // follower: eases toward the pointer, but no faster than FOLLOW_MAX of her dash
+      const fMax = FOLLOW_MAX * walk * DASH_BOOST * TOP_SPEED * f;
+      const ease = 1 - Math.pow(0.88, f);
+      let mx = (fTargetX - fx) * ease, my = (fTargetY - fy) * ease;
+      const m = Math.hypot(mx, my);
+      if (m > fMax) { mx *= fMax / m; my *= fMax / m; }
+      fx += mx; fy += my;
 
       // facing + stride
       const wStep = Math.hypot(wx - pwx, wy - pwy);
       const fStep = Math.hypot(fx - pfx, fy - pfy);
       if (wStep > 0.35) wAngle = Math.atan2(wy - pwy, wx - pwx) + Math.PI / 2;
+      // The tell: near the end of a pause she turns toward where she'll dash.
+      if (pauseLeft > 0 && pauseLeft < 0.5 && target) wAngle = Math.atan2(target.y - wy, target.x - wx) + Math.PI / 2;
       if (fStep > 0.35) fAngle = Math.atan2(fy - pfy, fx - pfx) + Math.PI / 2;
       wPhase += (0.6 + wStep * 6) * dt * 5;
       fPhase += (0.6 + fStep * 6) * dt * 5;
