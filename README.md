@@ -29,7 +29,8 @@ Open [http://localhost:3000](http://localhost:3000) and pick a mode.
 
 The choice between solo and two players is part of the URL, for example
 `/runner?play=local`, so the browser's Back button returns to the mode menu
-and a link can open a mode directly.
+and a link can open a mode directly. Every two-player mode can also be played
+online, each player on their own device; see [Online](#online).
 
 On touch devices, the two-player modes show an on-screen D-pad for each
 player. **Esc**, **P** or a gamepad's **Start** pauses any two-player game,
@@ -96,6 +97,39 @@ start button works with empty seats.
 Players are told apart by shape as well as color (● P1, ◆ P2), on the street,
 in the HUD and in the score tables.
 
+## Online
+
+Every mode menu has **With a friend online**, and the duel menu has **Play
+online with a friend instead**. Either opens a room with a four-letter code at
+`/r/CODE`. Send your friend the link, or tell them the code: they type it into
+**Got a room code?** at the bottom of the homepage.
+
+In the room's lobby the host picks the mode (open world, runner or duel) and,
+for the runner, the city. In co-op either player can swap who holds the
+umbrella; in the duel a coin flip decides the first round. When both press
+**Ready**, a 3-2-1 starts the match on both screens.
+
+Online, each device has one player, so WASD, the arrows and any gamepad all
+steer your walker. **Space** (or Y on a pad) sends your partner a wordless
+call, and **Esc** pauses for both of you. If someone's connection drops, the
+match freezes for both until they're back; after 30 seconds (20 in the duel)
+the other player can end it.
+
+To stay fair under lag, each device is in charge of what its player has to
+react to:
+
+- **The follower's device** decides cover, wetness, the streak, close calls,
+  taxi splashes and awnings, and how a round ends. What the follower sees is
+  what counts.
+- **The umbrella's device** places goals and rules on who picked each one up.
+- **The relay's clock** drives everything both players share: difficulty, the
+  duel's 60 seconds, and in the runner the street itself, which both devices
+  step in lockstep from the match's seed.
+
+Online play needs the relay in [`relay/`](relay/README.md), a small Cloudflare
+Worker. On `localhost` the site finds it at `ws://localhost:8787`; a deployed
+site needs `NEXT_PUBLIC_RELAY_URL` (see `.env.example`).
+
 ## Gamepads
 
 Every two-player mode reads gamepads through the browser's Gamepad API.
@@ -111,9 +145,12 @@ app/
   open-world/            /open-world (solo or two-player)
   runner/                /runner (solo or two-player)
   two-player/            /two-player (duel)
+  r/[code]/              /r/CODE, an online room
   components/            one component per game mode, plus:
-    ModeSelector.tsx     the solo / two-player menu, driven by ?play=
+    ModeSelector.tsx     the solo / two-player / online menu, driven by ?play=
     Seats.tsx            take-a-seat widget for two-player menus
+    JoinRoom.tsx         the homepage's room-code field
+    online/              lobby and the online games (square co-op and duel, runner)
   _lib/
     street.ts            the renderer: street, props, walkers, umbrella, rain, HUD
     cities.ts            per-city rules: pace, cover, rain, goals, obstacles, colors
@@ -128,6 +165,8 @@ app/
     focus.ts             pause on lost focus, release held keys
     play.ts              the ?play= mode in the URL
     collide.ts           solid obstacles
+    online/              relay protocol, room client with clock sync, snapshot smoothing
+relay/                   the Cloudflare Worker that pairs online players (own package)
 art/                     reference images the look is based on
 .claude/agents/          game-designer and UX reviewer agents for Claude Code
 ```
@@ -145,6 +184,8 @@ npm run dev      # dev server with hot reload
 npm run build    # production build
 npm run lint     # ESLint
 npx tsc --noEmit # typecheck
+
+cd relay && npm install && npm run dev   # the online relay, for testing online play locally
 ```
 
 Built with Next.js 16 (App Router, Turbopack), React 19, TypeScript and
