@@ -74,7 +74,7 @@ export default function Seats({ onStart }: { onStart: () => void }) {
 
   const status = (p: Player) => {
     const info = PLAYERS[p];
-    if (touch) return `${info.padSide} D-pad`;
+    if (touch) return `drag on the ${info.padSide} half`;
     if (seated[p] === 'pad') return '🎮 gamepad · A to start';
     if (seated[p] === 'keys') return `⌨ ${info.keyLabel}`;
     return `press ${info.keyLabel === 'WASD' ? 'W' : '↑'} or A on a pad`;

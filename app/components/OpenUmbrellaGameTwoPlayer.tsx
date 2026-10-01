@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import VirtualDPad from './VirtualDPad';
+import TouchStick from './TouchStick';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
   drawDryZone, drawGoalMarker, drawWetOverlay, drawHud, drawPrompt, walkWidth,
@@ -13,7 +13,7 @@ import {
   pickGoalSpot, type SquareGoalType,
 } from '../_lib/rules';
 import { makeRng, newSeed } from '../_lib/rng';
-import { WASD, ARROWS, pads, padPress, readStick, PAD_START } from '../_lib/input';
+import { WASD, ARROWS, pads, padPress, readStick, strongest, PAD_START, type Stick } from '../_lib/input';
 import { PLAYERS, tag, drawTag, controlsText } from '../_lib/players';
 import { padFor } from '../_lib/seats';
 import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
@@ -38,6 +38,9 @@ export default function OpenUmbrellaGameTwoPlayer() {
   const ref = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ gameState });
   const keysRef = useRef<Record<string, boolean>>({});
+  // each player's floating thumbstick: P1 on the left half of the screen, P2 on the right
+  const touchP1 = useRef<Stick>({ x: 0, y: 0 });
+  const touchP2 = useRef<Stick>({ x: 0, y: 0 });
   const isTouchRef = useRef(false);
 
   useEffect(() => { stateRef.current = { gameState }; }, [gameState]);
@@ -112,13 +115,13 @@ export default function OpenUmbrellaGameTwoPlayer() {
       const push = WALK_PUSH * (3.5 + difficulty * 0.3) * f;
 
       // P1 (woman) - WASD or the first gamepad
-      const p1 = readStick(KEYS, WASD, padFor('p1'));
+      const p1 = strongest(readStick(KEYS, WASD, padFor('p1')), touchP1.current);
       wvx = (wvx + p1.x * push) * keep; wvy = (wvy + p1.y * push) * keep;
       wx += wvx * f; wy += wvy * f;
       wx = Math.max(20, Math.min(W - 20, wx)); wy = Math.max(20, Math.min(H - 20, wy));
 
       // P2 (follower) - arrow keys or the second gamepad
-      const p2 = readStick(KEYS, ARROWS, padFor('p2'));
+      const p2 = strongest(readStick(KEYS, ARROWS, padFor('p2')), touchP2.current);
       fvx = (fvx + p2.x * push) * keep; fvy = (fvy + p2.y * push) * keep;
       fx += fvx * f; fy += fvy * f;
       fx = Math.max(20, Math.min(W - 20, fx)); fy = Math.max(20, Math.min(H - 20, fy));
@@ -274,20 +277,8 @@ export default function OpenUmbrellaGameTwoPlayer() {
         className="block w-full h-full"
         style={{ cursor: 'default', display: 'block', touchAction: 'none', objectFit: 'contain' }}
       />
-      <VirtualDPad
-        keysRef={keysRef}
-        keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
-        position="left"
-        color={PLAYERS.p1.color}
-        label={tag('p1')}
-      />
-      <VirtualDPad
-        keysRef={keysRef}
-        keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }}
-        position="right"
-        color={PLAYERS.p2.color}
-        label={tag('p2')}
-      />
+      <TouchStick stickRef={touchP1} zone="left" color={PLAYERS.p1.color} hint={`${tag('p1')} drag`} />
+      <TouchStick stickRef={touchP2} zone="right" color={PLAYERS.p2.color} hint={`${tag('p2')} drag`} />
 
       {gameState === 'menu' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', padding: '0 20px' }}>

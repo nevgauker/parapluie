@@ -245,7 +245,7 @@ export default function Lobby({ code, create }: { code: string; create?: { mode:
         </button>
         {theirs?.ready && !mine?.ready && <Note>{theirs.name} is ready.</Note>}
         {theirs && !theirs.connected && <Note>{theirs.name} dropped out; waiting for them to come back.</Note>}
-        <Note>Your controls: WASD, arrows or a gamepad · Space calls your partner · Esc pauses</Note>
+        <Note>Your controls: WASD, arrows, a gamepad, or drag on the screen · Space or 📣 calls your partner · Esc or ⏸ pauses</Note>
       </div>
 
       <Link href="/" onClick={() => client.close()} style={quiet}>Leave room</Link>

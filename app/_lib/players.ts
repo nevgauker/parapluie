@@ -17,7 +17,7 @@ export interface PlayerInfo {
   rgb: string;
   keys: KeySet;
   keyLabel: string;
-  /** which side of the screen their touch D-pad sits on */
+  /** which half of the screen their touch thumbstick lives in */
   padSide: 'left' | 'right';
 }
 
@@ -35,7 +35,7 @@ export const tag = (p: Player) => `${PLAYERS[p].shape} ${PLAYERS[p].name}`;
 /** One player's controls, e.g. "● P1: WASD or a gamepad". */
 export function controlsLine(p: Player, touch = false) {
   const info = PLAYERS[p];
-  return touch ? `${tag(p)}: ${info.padSide} D-pad` : `${tag(p)}: ${info.keyLabel} or a gamepad`;
+  return touch ? `${tag(p)}: drag on the ${info.padSide} half` : `${tag(p)}: ${info.keyLabel} or a gamepad`;
 }
 
 /** Both players' controls on one line. */

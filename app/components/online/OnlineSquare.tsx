@@ -19,6 +19,8 @@ import { playTime, isPaused, type Match, type Seat, type GameMsg, type NetGoal, 
 import type { RoomClient } from '../../_lib/online/client';
 import { SnapBuffer, SNAP_EVERY_MS, INTERP_DELAY_MS } from '../../_lib/online/snaps';
 import { onlineStick, overlayText, SHAKY_MS, type OnlineResult } from './common';
+import TouchStick from '../TouchStick';
+import type { Stick } from '../../_lib/input';
 
 /**
  * Online play on the open square: co-op ('open-world') and the duel.
@@ -58,6 +60,9 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const keysRef = useRef<Record<string, boolean>>({});
+  // the on-screen thumbstick, and the on-screen call / pause buttons' actions
+  const touchRef = useRef<Stick>({ x: 0, y: 0 });
+  const actionsRef = useRef<{ call(): void; pause(): void }>({ call() {}, pause() {} });
   const overRef = useRef(onOver);
   useEffect(() => { overRef.current = onOver; });
 
@@ -212,6 +217,10 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
       client.game({ k: 'ping-call', by: seat });
       floats.push({ x: mx, y: my - 44, text: iHold ? '☂ ring ring!' : 'Attends !', color: PLAYERS[seat].color, life: 1.6 });
     };
+    actionsRef.current = {
+      call: () => { if (!ended) call(); },
+      pause: () => { if (!ended) togglePause(); },
+    };
     const onDown = (e: KeyboardEvent) => {
       KEYS[e.key] = true;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
@@ -238,7 +247,7 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
       const pmx = mx, pmy = my;
 
       // my walker
-      const s = onlineStick(KEYS);
+      const s = onlineStick(KEYS, touchRef.current);
       const { push, damp } = moveModel(duel, iHold, d);
       const keep = Math.pow(damp, f);
       mvx = (mvx + s.x * push * f) * keep;
@@ -414,12 +423,21 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
   }, [client, match, seat]);
 
   return (
-    <canvas
-      ref={ref}
-      width={SQUARE_W}
-      height={SQUARE_H}
-      className="block w-full h-full"
-      style={{ display: 'block', touchAction: 'none', objectFit: 'contain', background: PALETTE.night }}
-    />
+    <div style={{ position: 'relative', width: '100%', height: '100%', touchAction: 'none' }}>
+      <canvas
+        ref={ref}
+        width={SQUARE_W}
+        height={SQUARE_H}
+        className="block w-full h-full"
+        style={{ display: 'block', touchAction: 'none', objectFit: 'contain', background: PALETTE.night }}
+      />
+      <TouchStick
+        stickRef={touchRef}
+        buttons={[
+          { label: '📣', aria: 'Call your partner', onPress: () => actionsRef.current.call() },
+          { label: '⏸', aria: 'Pause', onPress: () => actionsRef.current.pause() },
+        ]}
+      />
+    </div>
   );
 }
