@@ -34,3 +34,6 @@ logs/
 # Misc
 .cache/
 .turbo/
+
+# typescript build cache
+*.tsbuildinfo
