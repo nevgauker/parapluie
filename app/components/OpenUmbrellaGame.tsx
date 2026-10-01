@@ -4,8 +4,10 @@ import Link from 'next/link';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
   drawDryZone, drawGoalMarker, drawWetOverlay, drawHud, drawPrompt, walkWidth,
-  type StreetView, type DryZone, type Ripple,
+  drawFloatTexts, tickFloatTexts,
+  type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
+import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number; }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; }
@@ -84,6 +86,9 @@ export default function OpenUmbrellaGame() {
     // her rhythm: walk to `target`, linger for pauseLeft, then dash for dashLeft
     let target: Goal | null = null;
     let pauseLeft = 0, dashLeft = 0;
+    // the follower's reward for playing the rim: multiplier + close-call bonus
+    const streak = newDryStreak();
+    let floats: FloatText[] = [];
 
     function newDrop(anywhere = false): Drop {
       return { x: Math.random() * W, y: anywhere ? Math.random() * H : -18, len: 10 + Math.random() * 14, spd: 4 + Math.random() * 3, a: 0.1 + Math.random() * 0.12 };
@@ -144,7 +149,9 @@ export default function OpenUmbrellaGame() {
           wvx += (dx / dist) * spd * 0.18 * f; wvy += (dy / dist) * spd * 0.18 * f;
         } else {
           target.reached = true; pauseLeft = target.pause; dashLeft = 0;
-          score += Math.round(target.pts * difficulty);
+          const pts = Math.round(target.pts * difficulty * streak.mult);
+          score += pts;
+          floats.push({ x: wx, y: wy - 30, text: `+${pts}`, color: PALETTE.cream, life: 1 });
           const emoji = target.emoji;
           sparks.push(...Array.from({ length: 5 }, () => ({ x: wx, y: wy, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji })));
           target = null;
@@ -182,6 +189,10 @@ export default function OpenUmbrellaGame() {
 
       // wetness
       const sep = Math.hypot(fx - wx, fy - wy);
+      const edge = tickDryStreak(streak, sep, COVER_R, dt, difficulty);
+      score += edge.pts;
+      floats.push(...streakCallouts(edge.events, fx, fy));
+      floats = tickFloatTexts(floats, dt);
       if (sep > COVER_R) wet = Math.min(1, wet + dt * 0.18); else wet = Math.max(0, wet - dt * 0.05);
 
       sparks.forEach(s => { s.x += s.vx; s.y += s.vy; s.life -= dt * 1.5; });
@@ -215,7 +226,7 @@ export default function OpenUmbrellaGame() {
         drawGoalMarker(ctx, g.x, g.y, g.emoji, 1 - g.age / g.dur, g.pulse, g.age * 2);
       }
 
-      drawDryZone(ctx, wx, wy, COVER_R, sep / COVER_R);
+      drawDryZone(ctx, wx, wy, COVER_R, sep / COVER_R, streak.mult);
 
       drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
         angle: fAngle, phase: fPhase, wet,
@@ -233,8 +244,9 @@ export default function OpenUmbrellaGame() {
         ctx.fillText(s.emoji, s.x, s.y); ctx.restore();
       }
 
+      drawFloatTexts(ctx, floats);
       drawWetOverlay(ctx, W, H, fx, fy, wet);
-      drawHud(ctx, W, score, wet, 54);
+      drawHud(ctx, W, score, wet, 54, streak.mult);
 
       if (!running) {
         drawPrompt(
