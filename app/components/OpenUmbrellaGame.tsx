@@ -50,9 +50,7 @@ export default function OpenUmbrellaGame() {
   useEffect(() => { stateRef.current = { gameState }; }, [gameState]);
   useEffect(() => { isTouchRef.current = navigator.maxTouchPoints > 0; }, []);
 
-  const handleStart = () => { setGameState('playing'); };
   const handleRestart = () => { setGameState('playing'); };
-  const handleMenu = () => { setGameState('menu'); };
 
   useEffect(() => {
     const canvas = ref.current!;
