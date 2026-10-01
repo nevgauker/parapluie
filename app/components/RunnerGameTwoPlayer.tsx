@@ -10,6 +10,8 @@ import {
 import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
 import { cityEvents } from '../_lib/cityEvents';
 import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
+import { pushOut } from '../_lib/collide';
+import { WASD, ARROWS, pads, padPress, readStick } from '../_lib/input';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; pauseLeft: number }
@@ -22,6 +24,11 @@ type GameState = 'menu' | 'playing' | 'dead';
 const COVER_R = 72;
 /** Drawn size of the canopy itself — the shelter circle is wider. */
 const CANOPY_R = 25;
+
+/** How hard a full stick pushes a walker, relative to the street, per 60 Hz frame. */
+const WALK_PUSH = 0.6;
+/** Velocity kept each 60 Hz frame; with WALK_PUSH this tops out near 2.7 px a frame. */
+const DAMP = 0.82;
 
 export default function RunnerGameTwoPlayer() {
   const [gameState, setGameState] = useState<GameState>('menu');
@@ -56,7 +63,8 @@ export default function RunnerGameTwoPlayer() {
     let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing';
     let worldY = 0;
     let wx = W / 2, wy = 0, wvx = 0, wvy = 0;
-    let fx = W / 2, fy = 80, fvx = 0, fvy = 0;
+    // the follower starts inside cover, even under Paris's small umbrella
+    let fx = W / 2, fy = 45, fvx = 0, fvy = 0;
     const drops: Drop[] = [];
     let goals: Goal[] = [];
     let sparks: Spark[] = [];
@@ -82,7 +90,10 @@ export default function RunnerGameTwoPlayer() {
     const edges = () => { const w = roadW(); return { left: (W - w) / 2, right: (W + w) / 2 }; };
     const project = (y: number) => y - worldY + H / 2;
 
-    const onDown = (e: KeyboardEvent) => { KEYS[e.key] = true; };
+    const onDown = (e: KeyboardEvent) => {
+      KEYS[e.key] = true;
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+    };
     const onUp = (e: KeyboardEvent) => { KEYS[e.key] = false; };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
@@ -113,7 +124,12 @@ export default function RunnerGameTwoPlayer() {
       t += dt; elapsed += dt; diffTimer += dt;
       if (diffTimer > 12) { diffTimer = 0; difficulty = Math.min(3, difficulty + 0.2); }
 
-      worldY -= (1.5 + difficulty * 0.4) * cityConfig.pace * dt * 60;
+      const scroll = (1.5 + difficulty * 0.4) * cityConfig.pace * dt * 60;
+      worldY -= scroll;
+      // Both walkers move forward with the street; the players only steer
+      // them around the frame.
+      wy -= scroll;
+      fy -= scroll;
 
       for (const d of drops) {
         d.y += d.spd * (1 + difficulty * 0.2);
@@ -122,7 +138,7 @@ export default function RunnerGameTwoPlayer() {
 
       const { left: streetLeft, right: streetRight } = edges();
       const pwx = wx, pwy = wy, pfx = fx, pfy = fy;
-      const spd = 2.8 * dt * 60;
+      const f = dt * 60;
 
       // Rain hitting the road, in world space so the rings scroll with it.
       tickRipples(ripples, dt, 11, () => ({
@@ -134,61 +150,32 @@ export default function RunnerGameTwoPlayer() {
       const weather = events.tick(dt, { worldY, W, H, left: streetLeft, right: streetRight, difficulty, fx, fy });
       dryShift = weather.dryShift;
 
-      // P1 (woman) - free movement with WASD
-      if (KEYS['a'] || KEYS['A']) wvx -= spd;
-      if (KEYS['d'] || KEYS['D']) wvx += spd;
-      if (KEYS['w'] || KEYS['W']) wvy -= spd;
-      if (KEYS['s'] || KEYS['S']) wvy += spd;
+      // P1 steers the woman, P2 the follower: keys, or the first and second pad.
+      const [pad1, pad2] = pads();
+      const p1 = readStick(KEYS, WASD, pad1);
+      const p2 = readStick(KEYS, ARROWS, pad2);
+      const keep = Math.pow(DAMP, f);
 
-      // Obstacle avoidance for woman
-      obstacles.forEach((obs) => {
-        const closestX = Math.max(obs.x, Math.min(wx, obs.x + obs.w));
-        const closestY = Math.max(obs.y, Math.min(wy, obs.y + obs.h));
-        const dx = wx - closestX;
-        const dy = wy - closestY;
-        const dist = Math.hypot(dx, dy);
-        const avoidDist = 80;
-        if (dist < avoidDist && dist > 0) {
-          const repel = (avoidDist - dist) / avoidDist * 0.12;
-          wvx += (dx / dist) * repel;
-          wvy += (dy / dist) * repel;
-        }
-      });
-
-      wvx *= 0.88; wvy *= 0.88;
-      wx += wvx + weather.wind * dt * 60; wy += wvy;
+      wvx = (wvx + p1.x * WALK_PUSH * f) * keep;
+      wvy = (wvy + p1.y * WALK_PUSH * f) * keep;
+      wx += (wvx + weather.wind) * f; wy += wvy * f;
       wx = Math.max(streetLeft + 20, Math.min(streetRight - 20, wx));
       wy = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, wy));
 
-      // P2 (follower) - free movement with Arrow keys
-      if (KEYS['ArrowLeft']) fvx -= spd;
-      if (KEYS['ArrowRight']) fvx += spd;
-      if (KEYS['ArrowUp']) fvy -= spd;
-      if (KEYS['ArrowDown']) fvy += spd;
-      fvx *= 0.88; fvy *= 0.88;
-      fx += fvx + weather.wind * dt * 60; fy += fvy;
+      fvx = (fvx + p2.x * WALK_PUSH * f) * keep;
+      fvy = (fvy + p2.y * WALK_PUSH * f) * keep;
+      fx += (fvx + weather.wind) * f; fy += fvy * f;
       fx = Math.max(streetLeft + 15, Math.min(streetRight - 15, fx));
       fy = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, fy));
 
-      // Obstacle collision - accurate circle-to-rectangle
-      obstacles.forEach((obs) => {
-        const circleToRect = (cx: number, cy: number, radius: number): boolean => {
-          const closestX = Math.max(obs.x, Math.min(cx, obs.x + obs.w));
-          const closestY = Math.max(obs.y, Math.min(cy, obs.y + obs.h));
-          const dx = cx - closestX;
-          const dy = cy - closestY;
-          return dx * dx + dy * dy < radius * radius;
-        };
-
-        if (circleToRect(wx, wy, 20)) {
-          wx -= wvx * 0.8; wy -= wvy * 0.8;
-          wvx *= -0.5; wvy *= -0.5;
-        }
-        if (circleToRect(fx, fy, 20)) {
-          fx -= fvx * 0.8; fy -= fvy * 0.8;
-          fvx *= -0.5; fvy *= -0.5;
-        }
-      });
+      // Obstacles are solid: step both walkers back out of any they overlap.
+      const bounds = { left: streetLeft, right: streetRight, top: worldY - H / 2 + 40, bottom: worldY + H / 2 - 40 };
+      for (const obs of obstacles) {
+        const w = pushOut(wx, wy, 20, obs, bounds);
+        if (w) { wx = w.x; wy = w.y; wvx *= 0.5; wvy *= 0.5; }
+        const p = pushOut(fx, fy, 15, obs, bounds);
+        if (p) { fx = p.x; fy = p.y; fvx *= 0.5; fvy *= 0.5; }
+      }
 
       // Facing and stride: the street itself is moving, so both figures keep
       // walking even when the players hold still.
@@ -228,7 +215,8 @@ export default function RunnerGameTwoPlayer() {
         spawnObstacle();
         obstacleTimer = 4 / difficulty;
       }
-      obstacles = obstacles.filter(o => o.y > worldY - H - 100);
+      // Drop obstacles once they've scrolled off the bottom.
+      obstacles = obstacles.filter(o => o.y < worldY + H / 2 + 100);
 
       // Wetness - safe under the umbrella or an awning
       const sep = Math.hypot(fx - (wx + dryShift), fy - wy);
@@ -311,17 +299,25 @@ export default function RunnerGameTwoPlayer() {
       drawHud(ctx, W, score, wet, 54);
 
       if (!running) {
+        const n = pads().length;
         drawPrompt(
           ctx, W, H,
-          isTouchRef.current ? 'tap to start' : 'click to start',
-          'P1: WASD · P2: Arrows — collect together',
+          n ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
+          `P1: WASD${n > 0 ? ' or 🎮 1' : ''} · P2: arrows${n > 1 ? ' or 🎮 2' : ''} — collect together`,
         );
       }
     }
 
+    // A or Start on any pad: start the round, or leave the menu / end screen.
+    const pressedStart = padPress();
+
     function loop(ts: number) {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
       lastTs = ts;
+      if (pressedStart()) {
+        if (stateRef.current.gameState !== 'playing') setGameState('playing');
+        else running = true;
+      }
       if (running) update(dt);
       draw();
       raf = requestAnimationFrame(loop);
@@ -362,6 +358,7 @@ export default function RunnerGameTwoPlayer() {
           </div>
           <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.45)', marginBottom: 22, textAlign: 'center', maxWidth: 260, lineHeight: 1.6, minHeight: 36 }}>{CITIES[city].hint}</p>
           <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: 'var(--brick)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start Game</button>
+          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.3)', marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>P1: WASD · P2: arrows<br />🎮 Gamepads work too: first is P1, second P2. Press A to start.</p>
         </div>
       )}
 

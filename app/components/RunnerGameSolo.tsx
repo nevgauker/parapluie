@@ -10,6 +10,7 @@ import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
 import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
 import { cityEvents } from '../_lib/cityEvents';
 import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
+import { pushOut } from '../_lib/collide';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean }
@@ -122,25 +123,8 @@ export default function RunnerGameSolo() {
       obstacles.push({ id: obstacleId++, x: ox, y: oy, w: obs.w, h: obs.h, emoji: obs.emoji });
     }
 
-    /**
-     * Where a walker of radius r has to stand to clear an obstacle, or null if
-     * they already do. Takes the shortest way out that stays on the road and
-     * on screen, so nobody gets shoved off the bottom edge and then clamped
-     * straight back inside the obstacle.
-     */
-    function pushOut(x: number, y: number, r: number, o: Obstacle) {
-      const cx = Math.max(o.x, Math.min(x, o.x + o.w));
-      const cy = Math.max(o.y, Math.min(y, o.y + o.h));
-      if (Math.hypot(x - cx, y - cy) >= r) return null;
-      const { left, right } = edges();
-      const top = worldY - H / 2 + 40, bottom = worldY + H / 2 - 40;
-      const exits = [
-        { x: o.x - r, y }, { x: o.x + o.w + r, y },
-        { x, y: o.y - r }, { x, y: o.y + o.h + r },
-      ].filter(p => p.x >= left + r && p.x <= right - r && p.y >= top && p.y <= bottom);
-      if (!exits.length) return null;
-      return exits.reduce((a, b) => Math.hypot(a.x - x, a.y - y) <= Math.hypot(b.x - x, b.y - y) ? a : b);
-    }
+    /** The road, and the stretch of it on screen: where walkers may stand. */
+    const bounds = () => ({ ...edges(), top: worldY - H / 2 + 40, bottom: worldY + H / 2 - 40 });
 
     function update(dt: number) {
       t += dt; elapsed += dt; diffTimer += dt;
@@ -229,10 +213,11 @@ export default function RunnerGameSolo() {
       fy = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, fy));
 
       // Obstacles are solid: step both walkers back out of any they overlap.
+      const b = bounds();
       for (const obs of obstacles) {
-        const w = pushOut(wx, wy, 20, obs);
+        const w = pushOut(wx, wy, 20, obs, b);
         if (w) { wx = w.x; wy = w.y; wvx *= 0.5; wvy *= 0.5; }
-        const p = pushOut(fx, fy, 15, obs);
+        const p = pushOut(fx, fy, 15, obs, b);
         if (p) { fx = p.x; fy = p.y; }
       }
 
