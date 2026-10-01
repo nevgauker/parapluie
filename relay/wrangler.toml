@@ -16,4 +16,4 @@ new_sqlite_classes = ["Room"]
 [vars]
 # Comma-separated origins allowed to connect, e.g. "https://parapluie.example".
 # Leave empty to allow any (fine for testing; set it for production).
-ALLOWED_ORIGINS = ""
+ALLOWED_ORIGINS = "https://parapluie-five.vercel.app,https://parapluie.rotemnev.com,http://parapluie.rotemnev.com,http://localhost:3000"
