@@ -8,6 +8,11 @@ import type { RoomState, Match, Seat, OnlineMode, CityId } from '../../_lib/onli
 import { PLAYERS } from '../../_lib/players';
 import { CITIES, CITY_IDS } from '../../_lib/cities';
 import { GIVE_UP_MS, type OnlineResult } from './common';
+import { recordBest, bestKey, type BestResult } from '../../_lib/bests';
+import BestLine from '../BestLine';
+
+/** A finished round, plus how it compared with this browser's best (co-op only). */
+type Result = OnlineResult & { best?: BestResult };
 
 const OnlineSquare = dynamic(() => import('./OnlineSquare'), { ssr: false });
 const OnlineRunner = dynamic(() => import('./OnlineRunner'), { ssr: false });
@@ -50,7 +55,7 @@ export default function Lobby({ code, create }: { code: string; create?: { mode:
   const [seat, setSeat] = useState<Seat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [match, setMatch] = useState<Match | null>(null);
-  const [results, setResults] = useState<OnlineResult[]>([]);
+  const [results, setResults] = useState<Result[]>([]);
   const [copied, setCopied] = useState(false);
   // matches this tab has already finished (by start time): the relay keeps
   // listing one until both players are done, and it must not be re-entered
@@ -87,7 +92,11 @@ export default function Lobby({ code, create }: { code: string; create?: { mode:
   }, [client]);
 
   const onOver = useCallback((r: OnlineResult) => {
-    setResults(rs => [...rs, r]);
+    // co-op runs that actually finished count toward this browser's best
+    const best = r.mode !== 'duel' && r.end !== 'left'
+      ? recordBest(bestKey(r.mode === 'runner' ? 'runner' : 'open', 'online', r.city), r.wScore + r.fScore, r.time)
+      : undefined;
+    setResults(rs => [...rs, { ...r, best }]);
     setMatch(m => { if (m) finished.current.add(m.startAt); return null; });
     client?.send({ t: 'over' });
   }, [client]);
@@ -273,7 +282,7 @@ function SeatCard({ seat, info, you, umbrella, children }: {
   );
 }
 
-function Results({ results, room, seat }: { results: OnlineResult[]; room: RoomState; seat: Seat }) {
+function Results({ results, room, seat }: { results: Result[]; room: RoomState; seat: Seat }) {
   const last = results[results.length - 1];
   const nameOf = (s: Seat) => (s === seat ? 'You' : room.seats[s]?.name ?? PLAYERS[s].name);
   const pts = (r: OnlineResult, s: Seat) => (r.umbrella === s ? r.wScore : r.fScore);
@@ -289,6 +298,7 @@ function Results({ results, room, seat }: { results: OnlineResult[]; room: RoomS
         <Title>{`You and ${partner} lasted ${last.time}s${place}`}</Title>
         <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 32, fontWeight: 700, color: 'var(--fog)' }}>{last.wScore + last.fScore}</div>
         <Note>goals {last.wScore} · staying dry {last.fScore}</Note>
+        <div style={{ marginTop: 8 }}><BestLine result={last.best ?? null} score={last.wScore + last.fScore} /></div>
       </div>
     );
   }

@@ -9,6 +9,8 @@ import {
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
 import { sound, playStreak } from '../_lib/sound';
+import { recordBest, bestKey, type BestResult } from '../_lib/bests';
+import BestLine from './BestLine';
 import {
   SQUARE_W, SQUARE_H, SQUARE_INSET, SQUARE_COVER_R, SQUARE_GOALS, TOGETHER_GRACE, ALONE_SHARE,
   pickGoalSpot, type SquareGoalType,
@@ -35,7 +37,7 @@ const DAMP = 0.85;
 
 export default function OpenUmbrellaGameTwoPlayer() {
   const [gameState, setGameState] = useState<GameState>('menu');
-  const [endStats, setEndStats] = useState({ score: 0, time: 0 });
+  const [endStats, setEndStats] = useState<{ score: number; time: number; cause: string; best: BestResult | null }>({ score: 0, time: 0, cause: '', best: null });
   const ref = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ gameState });
   const keysRef = useRef<Record<string, boolean>>({});
@@ -178,7 +180,8 @@ export default function OpenUmbrellaGameTwoPlayer() {
       if (wet >= 1) {
         sound.soaked();
         running = false;
-        setEndStats({ score: Math.round(score), time: Math.round(elapsed) });
+        const final = Math.round(score);
+        setEndStats({ score: final, time: Math.round(elapsed), cause: `◆ P2 drifted out from under the umbrella after ${Math.round(elapsed)}s.`, best: recordBest(bestKey('open', 'local'), final, Math.round(elapsed)) });
         setGameState('dead');
       }
     }
@@ -247,7 +250,8 @@ export default function OpenUmbrellaGameTwoPlayer() {
     const pressedPause = padPress([PAD_START]);
 
     function loop(ts: number) {
-      const dt = Math.min((ts - lastTs) / 1000, 0.05);
+      // rAF's timestamp can predate the time a game (re)started: never step backwards
+      const dt = Math.max(0, Math.min((ts - lastTs) / 1000, 0.05));
       lastTs = ts;
       const start = pressedStart(), pause = pressedPause();
       const state = stateRef.current.gameState;
@@ -307,7 +311,7 @@ export default function OpenUmbrellaGameTwoPlayer() {
             {endStats.time > 30 ? 'Not bad.' : 'Soaked.'}
           </p>
           <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.35)', marginBottom: 24 }}>
-            {endStats.time > 60 ? 'Great teamwork!' : endStats.time > 30 ? 'Keep practicing' : 'Stay together!'}
+            {endStats.cause}
           </p>
           <div className="flex gap-6 mb-7">
             {[['score', endStats.score], ['time', endStats.time + 's']].map(([l, v]) => (
@@ -317,6 +321,7 @@ export default function OpenUmbrellaGameTwoPlayer() {
               </div>
             ))}
           </div>
+          <BestLine result={endStats.best} score={endStats.score} />
           <div className="flex gap-3">
             <button onClick={handleRestart} style={{ padding: '10px 24px', borderRadius: 24, background: 'var(--fog)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Play again</button>
             <button onClick={handleMenu} style={{ padding: '10px 24px', borderRadius: 24, background: 'transparent', color: 'rgba(240,236,224,0.55)', border: '.5px solid rgba(240,236,224,0.2)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Menu</button>

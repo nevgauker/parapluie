@@ -9,6 +9,8 @@ import {
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
 import { sound, playStreak } from '../_lib/sound';
+import { recordBest, bestKey, type BestResult } from '../_lib/bests';
+import BestLine from './BestLine';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number; }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; }
@@ -43,7 +45,7 @@ const GOAL_TYPES = [
 
 export default function OpenUmbrellaGame() {
   const [gameState, setGameState] = useState<GameState>('menu');
-  const [endStats, setEndStats] = useState({ score: 0, time: 0 });
+  const [endStats, setEndStats] = useState<{ score: number; time: number; cause: string; best: BestResult | null }>({ score: 0, time: 0, cause: '', best: null });
   const ref = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ gameState });
   const isTouchRef = useRef(false);
@@ -203,7 +205,8 @@ export default function OpenUmbrellaGame() {
       if (wet >= 1) {
         sound.soaked();
         running = false;
-        setEndStats({ score: Math.round(score), time: Math.round(elapsed) });
+        const final = Math.round(score);
+        setEndStats({ score: final, time: Math.round(elapsed), cause: target ? `You lost her on the way to the ${target.emoji}.` : 'She walked on without you.', best: recordBest(bestKey('open', 'solo'), final, Math.round(elapsed)) });
         setGameState('dead');
       }
     }
@@ -261,7 +264,8 @@ export default function OpenUmbrellaGame() {
     }
 
     function loop(ts: number) {
-      const dt = Math.min((ts - lastTs) / 1000, 0.05);
+      // rAF's timestamp can predate the time a game (re)started: never step backwards
+      const dt = Math.max(0, Math.min((ts - lastTs) / 1000, 0.05));
       lastTs = ts;
       if (running) update(dt);
       draw();
@@ -295,7 +299,7 @@ export default function OpenUmbrellaGame() {
             {endStats.time > 30 ? 'Not bad.' : 'Soaked.'}
           </p>
           <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.35)', marginBottom: 24 }}>
-            {endStats.time > 60 ? 'Great run!' : endStats.time > 30 ? 'Keep practicing' : 'Stay closer to the umbrella!'}
+            {endStats.cause}
           </p>
           <div className="flex gap-6 mb-7">
             {[['score', endStats.score], ['time', endStats.time + 's']].map(([l, v]) => (
@@ -305,6 +309,7 @@ export default function OpenUmbrellaGame() {
               </div>
             ))}
           </div>
+          <BestLine result={endStats.best} score={endStats.score} />
           <div className="flex gap-3">
             <button onClick={handleRestart} style={{ padding: '10px 24px', borderRadius: 24, background: 'var(--fog)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Play again</button>
             <Link href="/" style={{ padding: '10px 24px', borderRadius: 24, background: 'transparent', color: 'rgba(240,236,224,0.55)', border: '.5px solid rgba(240,236,224,0.2)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif', textDecoration: 'none', display: 'flex', alignItems: 'center' }}>Back home</Link>

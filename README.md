@@ -86,6 +86,15 @@ The follower's play drives the score in every mode:
   if the follower was under cover when it was collected (with 0.3 s of
   grace). Collected with the follower out in the rain, it pays half.
 
+### Best scores
+
+Each end screen says what got you ("You lost her on the way to the 🚌", "A
+taxi soaked you") and how the run compares with your best: a ★ NEW BEST, or
+how far short it fell. Bests are kept in your browser, one per mode, way of
+playing (solo, one screen, online) and, in the runner, city. The homepage
+cards show your top score for each mode. The duel keeps none: it's a contest
+between two people, not a score.
+
 ### Sound
 
 Everything you hear is synthesized in the browser; there are no audio
@@ -179,6 +188,7 @@ app/
     play.ts              the ?play= mode in the URL
     collide.ts           solid obstacles
     sound.ts             synthesized rain and sound cues
+    bests.ts             best scores kept in the browser
     online/              relay protocol, room client with clock sync, snapshot smoothing
 relay/                   the Cloudflare Worker that pairs online players (own package)
 art/                     reference images the look is based on
