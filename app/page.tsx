@@ -10,10 +10,10 @@ import Link from 'next/link';
 const MODES = [
   {
     href: '/open-world',
-    kicker: '● SOLO',
-    players: '1P',
+    kicker: '● SOLO OR TOGETHER',
+    players: '1–2P',
     title: 'Open world',
-    body: 'She wanders freely, chasing goals. Move your cursor to control the follower.',
+    body: 'She wanders freely, chasing goals. Follow her solo, or share the umbrella with a friend.',
     stars: '★★★',
     tags: ['— GOALS', '— RAIN', '— UMBRELLA —'],
     accent: 'var(--foliage)',
@@ -23,7 +23,7 @@ const MODES = [
   {
     href: '/runner',
     kicker: '● ENDLESS',
-    players: '1P',
+    players: '1–2P',
     title: 'Runner',
     body: 'The street always moves forward. Dodge obstacles, survive the scroll.',
     stars: '★★☆',
@@ -34,10 +34,10 @@ const MODES = [
   },
   {
     href: '/two-player',
-    kicker: '● LOCAL',
+    kicker: '● VERSUS',
     players: '2P',
     title: 'Two Player',
-    body: 'One keyboard. One umbrella. Two players compete and cooperate.',
+    body: 'One screen. One umbrella. Two rounds: each of you holds it once.',
     stars: '★★★',
     tags: ['— COMPETE', '— COOPERATE'],
     accent: 'var(--brick)',
@@ -135,7 +135,7 @@ export default function Home() {
       {/* HOW IT WORKS */}
       <section style={{ padding: '80px 24px', maxWidth: 800, margin: '0 auto' }}>
         <p style={{ fontFamily: 'var(--pixel)', fontSize: 8, letterSpacing: '.1em', color: 'var(--lamp)', marginBottom: 32, opacity: 0.7 }}>
-          // THE GAME
+          {'// THE GAME'}
         </p>
         <div className="grid gap-8" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
           {[
@@ -195,8 +195,10 @@ export default function Home() {
                   <div style={{ fontSize: 14, color: m.accent, marginBottom: 12, position: 'relative', zIndex: 1 }}>{m.stars}</div>
 
                   <div style={{ marginTop: 12, position: 'relative', zIndex: 1 }}>
-                    <button
+                    {/* a span, not a button: the whole card is already the link */}
+                    <span
                       style={{
+                        display: 'inline-block',
                         padding: '10px 24px',
                         borderRadius: 24,
                         background: m.accent,
@@ -211,11 +213,11 @@ export default function Home() {
                         transition: 'transform 0.2s ease',
                         letterSpacing: 1,
                       }}
-                      onMouseEnter={(e) => { (e.target as HTMLButtonElement).style.transform = 'scale(1.04)'; }}
-                      onMouseLeave={(e) => { (e.target as HTMLButtonElement).style.transform = 'scale(1)'; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.04)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                     >
                       ▶ SELECT
-                    </button>
+                    </span>
                   </div>
                   <div className="flex gap-2 flex-wrap" style={{ marginTop: 20, fontSize: 10, color: 'rgba(240,236,224,0.28)', fontFamily: 'var(--pixel)', position: 'relative', zIndex: 1 }}>
                     {m.tags.map(tag => <span key={tag}>{tag}</span>)}

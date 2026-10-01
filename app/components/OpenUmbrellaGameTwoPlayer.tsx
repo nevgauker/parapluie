@@ -13,7 +13,11 @@ import {
   pickGoalSpot, type SquareGoalType,
 } from '../_lib/rules';
 import { makeRng, newSeed } from '../_lib/rng';
-import { WASD, ARROWS, pads, padPress, readStick } from '../_lib/input';
+import { WASD, ARROWS, pads, padPress, readStick, PAD_START } from '../_lib/input';
+import { PLAYERS, tag, drawTag, controlsText } from '../_lib/players';
+import { padFor } from '../_lib/seats';
+import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
+import Seats from './Seats';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number; }
 interface Goal extends SquareGoalType { x: number; y: number; age: number; pulse: number; reached: boolean; pauseLeft: number; }
@@ -50,7 +54,7 @@ export default function OpenUmbrellaGameTwoPlayer() {
     const R = SQUARE_COVER_R;
 
     let raf = 0, t = 0, lastTs = 0;
-    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing';
+    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing', paused = false;
     let wx = W / 2, wy = H / 2, wvx = 0, wvy = 0;
     let fx = W / 2 + 30, fy = H / 2 + 30, fvx = 0, fvy = 0;
     const drops: Drop[] = [];
@@ -73,7 +77,10 @@ export default function OpenUmbrellaGameTwoPlayer() {
     const onDown = (e: KeyboardEvent) => {
       KEYS[e.key] = true;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      if (running && !e.repeat && PAUSE_KEYS.includes(e.key)) paused = !paused;
     };
+    // Losing focus mid-run pauses it and lets go of every held key.
+    const stopWatching = watchFocus(KEYS, () => { if (running) paused = true; });
     const onUp = (e: KeyboardEvent) => { KEYS[e.key] = false; };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
@@ -103,16 +110,15 @@ export default function OpenUmbrellaGameTwoPlayer() {
       // Movement scales with frame time, so a 144 Hz screen turns no sharper than a 60 Hz one.
       const f = dt * 60, keep = Math.pow(DAMP, f);
       const push = WALK_PUSH * (3.5 + difficulty * 0.3) * f;
-      const [pad1, pad2] = pads();
 
       // P1 (woman) - WASD or the first gamepad
-      const p1 = readStick(KEYS, WASD, pad1);
+      const p1 = readStick(KEYS, WASD, padFor('p1'));
       wvx = (wvx + p1.x * push) * keep; wvy = (wvy + p1.y * push) * keep;
       wx += wvx * f; wy += wvy * f;
       wx = Math.max(20, Math.min(W - 20, wx)); wy = Math.max(20, Math.min(H - 20, wy));
 
       // P2 (follower) - arrow keys or the second gamepad
-      const p2 = readStick(KEYS, ARROWS, pad2);
+      const p2 = readStick(KEYS, ARROWS, padFor('p2'));
       fvx = (fvx + p2.x * push) * keep; fvy = (fvy + p2.y * push) * keep;
       fx += fvx * f; fy += fvy * f;
       fx = Math.max(20, Math.min(W - 20, fx)); fy = Math.max(20, Math.min(H - 20, fy));
@@ -191,17 +197,16 @@ export default function OpenUmbrellaGameTwoPlayer() {
 
       drawDryZone(ctx, wx, wy, R, sep / R, streak.mult);
 
-      drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
+      drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent: PLAYERS.p2.color }, {
         angle: fAngle, phase: fPhase, wet,
       });
-      drawWalker(ctx, wx, wy, { jacket: PALETTE.jacketBlue, accent: '#7cc24f' }, {
+      drawWalker(ctx, wx, wy, { jacket: PALETTE.jacketBlue, accent: PLAYERS.p1.color }, {
         angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06,
       });
 
       // player tags, kept clear of the canopy
-      ctx.font = '500 9px Inter,sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillStyle = 'rgba(124,194,79,.6)'; ctx.fillText('P1', wx, wy - CANOPY_R - 6);
-      ctx.fillStyle = 'rgba(224,138,60,.6)'; ctx.fillText('P2', fx, fy - 16);
+      drawTag(ctx, 'p1', wx, wy - CANOPY_R - 12);
+      drawTag(ctx, 'p2', fx, fy - 16);
 
       drawRainField(ctx, drops, H, undefined, dry);
 
@@ -216,40 +221,47 @@ export default function OpenUmbrellaGameTwoPlayer() {
       drawWetOverlay(ctx, W, H, fx, fy, wet);
       drawHud(ctx, W, score, wet, 54, streak.mult);
 
-      if (!running) {
-        const n = pads().length;
+      // the menu overlay has its own instructions; the prompt is for after Start
+      if (!running && stateRef.current.gameState !== 'menu') {
         drawPrompt(
           ctx, W, H,
-          n ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
-          isTouchRef.current && !n ? 'use the D-pads to move'
-            : `P1: WASD${n > 0 ? ' or 🎮 1' : ''} · P2: arrows${n > 1 ? ' or 🎮 2' : ''}`,
+          pads().length ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
+          controlsText(isTouchRef.current),
         );
+      } else if (paused) {
+        drawPrompt(ctx, W, H, 'paused', 'Esc, P or Start to resume');
       }
     }
 
-    // A or Start on any pad: start the run, or play again from the end screen.
+    // Pads: A or Start begins a run or plays again; Start pauses. On the menu
+    // the seats take the pad instead, so pressing A there sits you down first.
     const pressedStart = padPress();
+    const pressedPause = padPress([PAD_START]);
 
     function loop(ts: number) {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
       lastTs = ts;
-      if (pressedStart()) {
-        if (stateRef.current.gameState === 'dead') setGameState('playing');
-        else running = true;
+      const start = pressedStart(), pause = pressedPause();
+      const state = stateRef.current.gameState;
+      if (state === 'dead' && start) setGameState('playing');
+      else if (state === 'playing') {
+        if (!running && start) running = true;
+        else if (running && (pause || (paused && start))) paused = !paused;
       }
-      if (running) update(dt);
+      if (running && !paused) update(dt);
       draw();
       raf = requestAnimationFrame(loop);
     }
     lastTs = performance.now();
     raf = requestAnimationFrame(loop);
 
-    canvas.addEventListener('click', () => { running = true; });
+    canvas.addEventListener('click', () => { if (stateRef.current.gameState === 'playing') running = true; });
 
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
+      stopWatching();
     };
   }, [gameState]);
 
@@ -266,16 +278,32 @@ export default function OpenUmbrellaGameTwoPlayer() {
         keysRef={keysRef}
         keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
         position="left"
-        color="#7cc24f"
-        label="P1"
+        color={PLAYERS.p1.color}
+        label={tag('p1')}
       />
       <VirtualDPad
         keysRef={keysRef}
         keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }}
         position="right"
-        color="#e08a3c"
-        label="P2"
+        color={PLAYERS.p2.color}
+        label={tag('p2')}
       />
+
+      {gameState === 'menu' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', padding: '0 20px' }}>
+          <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 28, fontWeight: 700, color: 'var(--fog)', marginBottom: 6 }}>Together</p>
+          <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.4)', marginBottom: 24, textAlign: 'center', lineHeight: 1.7 }}>
+            ● P1 holds the umbrella and chases goals. ◆ P2 follows.
+            <br />
+            Goals pay full only while P2 is dry.
+          </p>
+          <div style={{ marginBottom: 20 }}>
+            <Seats onStart={handleRestart} />
+          </div>
+          <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: 'var(--foliage)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start</button>
+          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.3)', marginTop: 14 }}>Esc, P or Start pauses.</p>
+        </div>
+      )}
 
       {gameState === 'dead' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.82)' }}>

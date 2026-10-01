@@ -1,12 +1,14 @@
 import { OpenWorldGame } from '../components/GameSection';
 import Link from 'next/link';
+import { parsePlay, playLabel } from '../_lib/play';
 
 export const metadata = {
   title: 'Open World - Parapluie',
   description: 'Follow the umbrella in open world mode - solo or multiplayer',
 };
 
-export default function OpenWorldPage() {
+export default async function OpenWorldPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
+  const play = parsePlay((await searchParams).play);
   return (
     <main style={{ width: '100vw', height: '100dvh', overflow: 'hidden', background: 'var(--asphalt)', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
@@ -15,12 +17,12 @@ export default function OpenWorldPage() {
           ◀ EXIT
         </Link>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--fog)', margin: 0, fontFamily: "'Space Grotesk',sans-serif", textShadow: 'var(--glow-foliage)' }}>Open World</h1>
-        <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.45)', textTransform: 'uppercase', letterSpacing: 1 }}>SOLO</div>
+        <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.45)', textTransform: 'uppercase', letterSpacing: 1 }}>{playLabel(play, 'OPEN SQUARE')}</div>
       </div>
 
       {/* Game Container */}
       <div style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
-        <OpenWorldGame />
+        <OpenWorldGame play={play} />
       </div>
     </main>
   );

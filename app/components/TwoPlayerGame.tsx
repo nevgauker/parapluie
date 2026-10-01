@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import VirtualDPad from './VirtualDPad';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
-  drawDryZone, drawGoalMarker, drawWetOverlay, walkWidth, drawFloatTexts, tickFloatTexts,
+  drawDryZone, drawGoalMarker, drawWetOverlay, walkWidth, drawFloatTexts, tickFloatTexts, drawPrompt,
   type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
@@ -12,7 +12,11 @@ import {
   pickGoalSpot, type SquareGoalType,
 } from '../_lib/rules';
 import { makeRng, newSeed, type Rng } from '../_lib/rng';
-import { WASD, ARROWS, pads, padPress, readStick, type KeySet } from '../_lib/input';
+import { padPress, readStick, PAD_START } from '../_lib/input';
+import { PLAYERS, PLAYER_IDS, other, tag, drawTag, type Player } from '../_lib/players';
+import { padFor } from '../_lib/seats';
+import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
+import Seats from './Seats';
 
 // ── types ──────────────────────────────────────────────────────────────────
 interface Drop  { x:number; y:number; len:number; spd:number; a:number }
@@ -20,7 +24,6 @@ interface Goal extends SquareGoalType { x:number; y:number; age:number; pulse:nu
 interface Spark { x:number; y:number; vx:number; vy:number; life:number; emoji:string }
 
 type Screen = 'menu' | 'playing' | 'between' | 'end';
-type Player = 'p1' | 'p2';
 
 /** One round of the match: who held the umbrella, what each side scored, how it ended. */
 interface RoundResult { woman:Player; wScore:number; fScore:number; time:number; end:'soaked'|'home' }
@@ -34,14 +37,9 @@ const COVER_PTS = 6;
 const SHAKE_BONUS = 250;
 const HOME_BONUS = 250;
 
-/** Each player keeps their keys, gamepad and colour all match; only the role swaps. */
-const PLAYERS: Record<Player, { name:string; color:string; rgb:string; keys:KeySet; pad:number; keyLabel:string; padLabel:string }> = {
-  p1: { name:'P1', color:'#7cc24f', rgb:'124,194,79', keys:WASD, pad:0, keyLabel:'WASD or pad 1', padLabel:'left D-pad' },
-  p2: { name:'P2', color:'#e08a3c', rgb:'224,138,60', keys:ARROWS, pad:1, keyLabel:'arrows or pad 2', padLabel:'right D-pad' },
-};
+// Each player keeps their keys, gamepad and colour all match; only the role swaps.
 /** Velocity kept each 60 Hz frame. */
 const DAMP = 0.82;
-const other = (p:Player): Player => p==='p1' ? 'p2' : 'p1';
 
 /** Totals per player across finished rounds plus the live one. */
 function totals(rounds: RoundResult[], live?: { woman:Player; wScore:number; fScore:number }) {
@@ -68,9 +66,9 @@ export default function TwoPlayerGame() {
   const [rounds,    setRounds]    = useState<RoundResult[]>([]);
   // Live round numbers for the HUD, pushed from the canvas loop at ~10 Hz.
   const [hud,       setHud]       = useState({ woman:'p1' as Player, wScore:0, fScore:0, wet:0, left:ROUND_TIME });
-  const [isTouchDevice, setIsTouchDevice] = useState(false);
+  // only ever rendered client-side (loaded with ssr: false), so navigator is there
+  const [isTouchDevice] = useState(() => navigator.maxTouchPoints > 0);
 
-  useEffect(() => { setIsTouchDevice(navigator.maxTouchPoints > 0); }, []);
 
   useEffect(() => {
     const bgc = bgRef.current!;
@@ -97,7 +95,7 @@ export default function TwoPlayerGame() {
     let floats:FloatText[]=[];
     let streak = newDryStreak();
     let wAngle=0, fAngle=0, wPhase=0, fPhase=0;
-    let raf=0, lt=0, active=false;
+    let raf=0, lt=0, active=false, paused=false;
 
     // Street geometry: a wide roadway with cobbled pavement down both sides.
     const INSET = SQUARE_INSET;
@@ -107,12 +105,18 @@ export default function TwoPlayerGame() {
 
     // ── keys ──
     const KEYS = keysRef.current;
-    const onDown = (e:KeyboardEvent) => { KEYS[e.key]=true;  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault(); };
+    const onDown = (e:KeyboardEvent) => {
+      KEYS[e.key]=true;
+      if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+      if (active && !e.repeat && PAUSE_KEYS.includes(e.key)) paused = !paused;
+    };
     const onUp   = (e:KeyboardEvent) => { KEYS[e.key]=false; };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup',   onUp);
     /** A player's keys or gamepad, as a stick. */
-    const stick = (p:Player) => readStick(KEYS, PLAYERS[p].keys, pads()[PLAYERS[p].pad]);
+    const stick = (p:Player) => readStick(KEYS, PLAYERS[p].keys, padFor(p));
+    // Losing focus mid-round pauses it and lets go of every held key.
+    const stopWatching = watchFocus(KEYS, () => { if (active) paused = true; });
 
     // ── helpers ──
     function newDrop(anywhere=false): Drop {
@@ -264,6 +268,7 @@ export default function TwoPlayerGame() {
 
       // Jackets follow the role, collar trim follows the player.
       const fp = PLAYERS[other(woman)], wp = PLAYERS[woman];
+
       drawWalker(ctx, fx, fy, { jacket: PALETTE.jacketOlive, accent: fp.color }, {
         angle: fAngle, phase: fPhase, wet,
       });
@@ -271,9 +276,8 @@ export default function TwoPlayerGame() {
         angle: wAngle, phase: wPhase, umbrella: 24, spin: Math.sin(elapsed*.7)*.06,
       });
 
-      ctx.font='600 10px Inter,sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom';
-      ctx.fillStyle=`rgba(${fp.rgb},.8)`; ctx.fillText(fp.name,fx,fy-16);
-      ctx.fillStyle=`rgba(${wp.rgb},.8)`; ctx.fillText(wp.name,wx,wy-36);
+      drawTag(ctx, other(woman), fx, fy-16);
+      drawTag(ctx, woman, wx, wy-36);
 
       drawRainField(ctx, drops, H, undefined, dry);
 
@@ -308,18 +312,22 @@ export default function TwoPlayerGame() {
 
     // ── loop ──
     const pressedStart = padPress();
+    const pressedPause = padPress([PAD_START]);
     function loop(ts:number) {
       const dt = Math.min((ts-lt)/1000,.05); lt=ts;
-      if (!active && pressedStart()) padActionRef.current?.();
+      const start = pressedStart(), pause = pressedPause();
+      if (!active && start) padActionRef.current?.();
+      else if (active && (pause || (paused && start))) paused = !paused;
       drawBg(); drawScene();
-      if (active) update(dt);
+      if (active && !paused) update(dt);
+      if (active && paused) drawPrompt(ctx, W, H, 'paused', 'Esc, P or Start to resume');
       raf=requestAnimationFrame(loop);
     }
 
     gameRef.current = {
       start(w, seed, n) {
         initRound(w, seed, n);
-        active=true; lt=performance.now();
+        active=true; paused=false; lt=performance.now();
         wrapRef.current?.focus();
       },
       stop() { active=false; },
@@ -335,6 +343,7 @@ export default function TwoPlayerGame() {
       gameRef.current = null;
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup',   onUp);
+      stopWatching();
     };
   }, []);
 
@@ -361,14 +370,15 @@ export default function TwoPlayerGame() {
 
   // A / Start on a gamepad presses the overlay's main button.
   useEffect(() => {
-    padActionRef.current = screen==='menu' || screen==='end' ? startMatch : screen==='between' ? nextRound : null;
+    // the menu's seats handle the pad themselves: A there takes a seat first
+    padActionRef.current = screen==='end' ? startMatch : screen==='between' ? nextRound : null;
   });
 
   const live = screen==='playing' ? hud : undefined;
   const score = totals(rounds, live);
   const last = rounds[rounds.length-1];
   const winner = score.p1===score.p2 ? null : score.p1>score.p2 ? 'p1' : 'p2';
-  const keysOf = (p:Player) => isTouchDevice ? PLAYERS[p].padLabel : PLAYERS[p].keyLabel;
+  const keysOf = (p:Player) => isTouchDevice ? `${PLAYERS[p].padSide} D-pad` : `${PLAYERS[p].keyLabel} or pad`;
   const roleOf = (p:Player) => live?.woman===p ? 'umbrella' : 'follower';
 
   return (
@@ -386,23 +396,23 @@ export default function TwoPlayerGame() {
         keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
         position="left"
         color={PLAYERS.p1.color}
-        label="P1"
+        label={tag('p1')}
       />
       <VirtualDPad
         keysRef={keysRef}
         keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }}
         position="right"
         color={PLAYERS.p2.color}
-        label="P2"
+        label={tag('p2')}
       />
 
       {/* ── HUD ── */}
       {screen==='playing' && (
         <div className="absolute top-0 left-0 w-full pointer-events-none" style={{ padding:'12px 16px' }}>
           <div className="flex justify-between items-start">
-            {(['p1','p2'] as Player[]).map((p, i) => (
+            {PLAYER_IDS.map((p, i) => (
               <div key={p} style={{ textAlign: i ? 'right' : 'left', order: i ? 3 : 1 }}>
-                <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:PLAYERS[p].color }}>{PLAYERS[p].name} · {roleOf(p)}</div>
+                <div style={{ fontSize:10, fontWeight:500, letterSpacing:'.05em', textTransform:'uppercase', color:PLAYERS[p].color }}>{tag(p)} · {roleOf(p)}</div>
                 <div style={{ fontSize:22, fontWeight:700, color:'var(--fog)', lineHeight:1, fontFamily:"'Space Grotesk',sans-serif" }}>{score[p]}</div>
                 <div style={{ fontSize:10, color:'rgba(240,236,224,.3)' }}>{roleOf(p)==='umbrella' ? 'goals' : 'stay dry'} · {keysOf(p)}</div>
               </div>
@@ -443,13 +453,8 @@ export default function TwoPlayerGame() {
             <br />
             or soak your follower to steal one.
           </p>
-          <div className="flex gap-6 mb-7">
-            {(['p1','p2'] as Player[]).map(p=>(
-              <div key={p} style={{ textAlign:'center' }}>
-                <div style={{ width:14, height:14, borderRadius:'50%', background:PLAYERS[p].color, margin:'0 auto 6px', border:'2px solid rgba(255,255,255,.8)' }} />
-                <div style={{ fontSize:12, fontWeight:500, color:PLAYERS[p].color }}>{PLAYERS[p].name} · {keysOf(p)}</div>
-              </div>
-            ))}
+          <div style={{ marginBottom:24 }}>
+            <Seats onStart={startMatch} />
           </div>
           <button onClick={startMatch} style={{ padding:'13px 44px', borderRadius:28, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:15, fontWeight:500, cursor:'pointer', fontFamily:'inherit', marginBottom:10 }}>
             Start — coin flip for the umbrella
@@ -462,29 +467,29 @@ export default function TwoPlayerGame() {
       {(screen==='between' || screen==='end') && last && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background:'rgba(0,0,0,.82)', padding:'0 20px' }}>
           <p style={{ fontFamily:"'Space Grotesk',sans-serif", fontSize:26, fontWeight:700, color: screen==='end' && winner ? PLAYERS[winner].color : 'var(--fog)', marginBottom:4 }}>
-            {screen==='between' ? `Round 1 — ${last.end==='home' ? 'made it home' : 'soaked'}` : winner ? `${PLAYERS[winner].name} wins!` : 'Draw!'}
+            {screen==='between' ? `Round 1 — ${last.end==='home' ? 'made it home' : 'soaked'}` : winner ? `${tag(winner)} wins!` : 'Draw!'}
           </p>
           <p style={{ fontSize:12, color:'rgba(240,236,224,.4)', marginBottom:24, textAlign:'center' }}>
             {screen==='between'
-              ? `Swap: ${PLAYERS[other(last.woman)].name} takes the umbrella.`
+              ? `Swap: ${tag(other(last.woman))} takes the umbrella.`
               : last.end==='home' ? 'The follower made it home dry.' : 'The follower got soaked.'}
           </p>
           <div style={{ display:'grid', gridTemplateColumns:'auto auto auto', gap:'6px 22px', marginBottom:26, alignItems:'baseline' }}>
             <span />
-            {(['p1','p2'] as Player[]).map(p => (
-              <span key={p} style={{ fontSize:11, fontWeight:600, color:PLAYERS[p].color, textAlign:'right' }}>{PLAYERS[p].name}</span>
+            {PLAYER_IDS.map(p => (
+              <span key={p} style={{ fontSize:11, fontWeight:600, color:PLAYERS[p].color, textAlign:'right' }}>{tag(p)}</span>
             ))}
             {rounds.map((r, i) => (
               <RoundRow key={i} label={`round ${i+1}`} r={r} />
             ))}
             <span style={{ fontSize:11, color:'rgba(240,236,224,.5)', paddingTop:6 }}>total</span>
-            {(['p1','p2'] as Player[]).map(p => (
+            {PLAYER_IDS.map(p => (
               <span key={p} style={{ fontSize:22, fontWeight:700, color:'var(--fog)', fontFamily:"'Space Grotesk',sans-serif", textAlign:'right', paddingTop:6 }}>{score[p]}</span>
             ))}
           </div>
           <div className="flex gap-3">
             {screen==='between'
-              ? <button onClick={nextRound} style={{ padding:'10px 28px', borderRadius:24, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:13, fontWeight:500, cursor:'pointer', fontFamily:'inherit' }}>Round 2 — {PLAYERS[other(last.woman)].name} holds the umbrella</button>
+              ? <button onClick={nextRound} style={{ padding:'10px 28px', borderRadius:24, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:13, fontWeight:500, cursor:'pointer', fontFamily:'inherit' }}>Round 2 — {tag(other(last.woman))} holds the umbrella</button>
               : <button onClick={startMatch} style={{ padding:'10px 28px', borderRadius:24, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:13, fontWeight:500, cursor:'pointer', fontFamily:'inherit' }}>Rematch</button>}
             <button onClick={handleMenu} style={{ padding:'10px 24px', borderRadius:24, background:'transparent', color:'rgba(240,236,224,.5)', border:'.5px solid rgba(240,236,224,.2)', fontSize:13, cursor:'pointer', fontFamily:'inherit' }}>Menu</button>
           </div>
@@ -500,7 +505,7 @@ function RoundRow({ label, r }: { label:string; r:RoundResult }) {
   return (
     <>
       <span style={{ fontSize:11, color:'rgba(240,236,224,.4)' }}>{label} · {r.time}s</span>
-      {(['p1','p2'] as Player[]).map(p => (
+      {PLAYER_IDS.map(p => (
         <span key={p} style={{ fontSize:14, color:'var(--fog)', textAlign:'right' }}>
           {pts(p)} <span style={{ fontSize:10, color:'rgba(240,236,224,.35)' }}>{r.woman===p ? '☂' : '🚶'}</span>
         </span>

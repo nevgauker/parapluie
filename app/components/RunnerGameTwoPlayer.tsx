@@ -11,7 +11,11 @@ import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
 import { cityEvents } from '../_lib/cityEvents';
 import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
 import { pushOut } from '../_lib/collide';
-import { WASD, ARROWS, pads, padPress, readStick } from '../_lib/input';
+import { WASD, ARROWS, pads, padPress, readStick, PAD_START } from '../_lib/input';
+import { PLAYERS, tag, drawTag, controlsText } from '../_lib/players';
+import { padFor } from '../_lib/seats';
+import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
+import Seats from './Seats';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
 import { TOGETHER_GRACE, ALONE_SHARE } from '../_lib/rules';
 import { makeRng, newSeed } from '../_lib/rng';
@@ -56,7 +60,7 @@ export default function RunnerGameTwoPlayer() {
     const W = ARENA_W, H = ARENA_H;
 
     let raf = 0, t = 0, lastTs = 0;
-    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing';
+    let score = 0, wet = 0, elapsed = 0, running = stateRef.current.gameState === 'playing', paused = false;
     let worldY = 0;
     let wx = W / 2, wy = 0, wvx = 0, wvy = 0;
     // the follower starts inside cover, even under Paris's small umbrella
@@ -92,7 +96,10 @@ export default function RunnerGameTwoPlayer() {
     const onDown = (e: KeyboardEvent) => {
       KEYS[e.key] = true;
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
+      if (running && !e.repeat && PAUSE_KEYS.includes(e.key)) paused = !paused;
     };
+    // Losing focus mid-run pauses it and lets go of every held key.
+    const stopWatching = watchFocus(KEYS, () => { if (running) paused = true; });
     const onUp = (e: KeyboardEvent) => { KEYS[e.key] = false; };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup', onUp);
@@ -150,9 +157,8 @@ export default function RunnerGameTwoPlayer() {
       dryShift = weather.dryShift;
 
       // P1 steers the woman, P2 the follower: keys, or the first and second pad.
-      const [pad1, pad2] = pads();
-      const p1 = readStick(KEYS, WASD, pad1);
-      const p2 = readStick(KEYS, ARROWS, pad2);
+      const p1 = readStick(KEYS, WASD, padFor('p1'));
+      const p2 = readStick(KEYS, ARROWS, padFor('p2'));
       const keep = Math.pow(DAMP, f);
 
       wvx = (wvx + p1.x * WALK_PUSH * f) * keep;
@@ -283,12 +289,14 @@ export default function RunnerGameTwoPlayer() {
       drawDryZone(ctx, wx + dryShift, wScreenY, coverR, sep / coverR, streak.mult);
 
       // P2 walks bare-headed; P1 is hidden under the canopy.
-      drawWalker(ctx, fx, fScreenY, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
+      drawWalker(ctx, fx, fScreenY, { jacket: PALETTE.jacketOlive, accent: PLAYERS.p2.color }, {
         angle: fAngle, phase: fPhase, wet,
       });
-      drawWalker(ctx, wx, wScreenY, { jacket: PALETTE.jacketBlue, accent: '#7cc24f' }, {
+      drawWalker(ctx, wx, wScreenY, { jacket: PALETTE.jacketBlue, accent: PLAYERS.p1.color }, {
         angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06, canopy: cityConfig.canopy,
       });
+      drawTag(ctx, 'p2', fx, fScreenY - 16);
+      drawTag(ctx, 'p1', wx, wScreenY - CANOPY_R - 12);
 
       drawRainField(ctx, drops, H, undefined, dry);
       events.drawOver(ctx, project);
@@ -307,27 +315,34 @@ export default function RunnerGameTwoPlayer() {
       drawWetOverlay(ctx, W, H, fx, fScreenY, wet);
       drawHud(ctx, W, score, wet, 54, streak.mult);
 
-      if (!running) {
-        const n = pads().length;
+      // the menu overlay has its own instructions; the prompt is for after Start
+      if (!running && stateRef.current.gameState !== 'menu') {
         drawPrompt(
           ctx, W, H,
-          n ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
-          `P1: WASD${n > 0 ? ' or 🎮 1' : ''} · P2: arrows${n > 1 ? ' or 🎮 2' : ''} — collect together`,
+          pads().length ? 'press A to start' : isTouchRef.current ? 'tap to start' : 'click to start',
+          controlsText(isTouchRef.current),
         );
+      } else if (paused) {
+        drawPrompt(ctx, W, H, 'paused', 'Esc, P or Start to resume');
       }
     }
 
-    // A or Start on any pad: start the round, or leave the menu / end screen.
+    // Pads: A or Start begins a run or plays again; Start pauses. On the menu
+    // the seats take the pad instead, so pressing A there sits you down first.
     const pressedStart = padPress();
+    const pressedPause = padPress([PAD_START]);
 
     function loop(ts: number) {
       const dt = Math.min((ts - lastTs) / 1000, 0.05);
       lastTs = ts;
-      if (pressedStart()) {
-        if (stateRef.current.gameState !== 'playing') setGameState('playing');
-        else running = true;
+      const start = pressedStart(), pause = pressedPause();
+      const state = stateRef.current.gameState;
+      if (state === 'dead' && start) setGameState('playing');
+      else if (state === 'playing') {
+        if (!running && start) running = true;
+        else if (running && (pause || (paused && start))) paused = !paused;
       }
-      if (running) update(dt);
+      if (running && !paused) update(dt);
       draw();
       raf = requestAnimationFrame(loop);
     }
@@ -341,6 +356,7 @@ export default function RunnerGameTwoPlayer() {
       cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
+      stopWatching();
     };
   }, [gameState, city]);
 
@@ -350,8 +366,8 @@ export default function RunnerGameTwoPlayer() {
   return (
     <div className="relative w-full h-full" style={{ background: PALETTE.night }}>
       <canvas ref={ref} width={ARENA_W} height={ARENA_H} className="block w-full h-full" style={{ cursor: 'default', display: 'block', touchAction: 'none', objectFit: 'contain' }} />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }} position="left" color="#7cc24f" label="P1" />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }} position="right" color="#e08a3c" label="P2" />
+      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }} position="left" color={PLAYERS.p1.color} label={tag('p1')} />
+      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }} position="right" color={PLAYERS.p2.color} label={tag('p2')} />
 
       {gameState === 'menu' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', borderRadius: 16 }}>
@@ -363,8 +379,11 @@ export default function RunnerGameTwoPlayer() {
             ))}
           </div>
           <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.45)', marginBottom: 22, textAlign: 'center', maxWidth: 260, lineHeight: 1.6, minHeight: 36 }}>{CITIES[city].hint}</p>
+          <div style={{ marginBottom: 20 }}>
+            <Seats onStart={handleRestart} />
+          </div>
           <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: 'var(--brick)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start Game</button>
-          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.3)', marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>P1: WASD · P2: arrows<br />🎮 Gamepads work too: first is P1, second P2. Press A to start.</p>
+          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.3)', marginTop: 14, textAlign: 'center', lineHeight: 1.6 }}>● P1 holds the umbrella, ◆ P2 follows.<br />Esc, P or Start pauses.</p>
         </div>
       )}
 
