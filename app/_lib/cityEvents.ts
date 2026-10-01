@@ -48,13 +48,20 @@ export interface CityEvents {
 
 const TAU = Math.PI * 2;
 const calm = (): CityEffect => ({ splash: 0, wind: 0, dryShift: 0, sheltered: false, callouts: [] });
-/** Hazards come round faster as the run heats up, but not linearly. */
-const every = (lo: number, hi: number, difficulty: number) => (lo + Math.random() * (hi - lo)) / Math.sqrt(difficulty);
+type Rng = () => number;
 
-export function cityEvents(id: CityId): CityEvents {
-  if (id === 'newyork') return taxis();
-  if (id === 'tokyo') return gusts();
-  return awnings();
+/** Hazards come round faster as the run heats up, but not linearly. */
+const every = (rng: Rng, lo: number, hi: number, difficulty: number) => (lo + rng() * (hi - lo)) / Math.sqrt(difficulty);
+
+/**
+ * @param rng drives everything that changes play (when hazards come, which
+ *   side, which way the wind blows); pass a seeded one so a seed replays the
+ *   same run. Spray and petals stay on Math.random, they're only looks.
+ */
+export function cityEvents(id: CityId, rng: Rng = Math.random): CityEvents {
+  if (id === 'newyork') return taxis(rng);
+  if (id === 'tokyo') return gusts(rng);
+  return awnings(rng);
 }
 
 // ── New York: taxis ────────────────────────────────────────────────────────
@@ -68,7 +75,7 @@ const SPLASH_WET = 0.3;
 
 interface Spray { x: number; y: number; vx: number; vy: number; life: number }
 
-function taxis(): CityEvents {
+function taxis(rng: Rng): CityEvents {
   let phase: 'idle' | 'warn' | 'drive' = 'idle';
   let timer = 5;
   let side = 1;
@@ -84,7 +91,7 @@ function taxis(): CityEvents {
 
       if (phase === 'idle' && timer <= 0) {
         phase = 'warn'; timer = TAXI_WARN;
-        side = Math.random() < 0.5 ? -1 : 1;
+        side = rng() < 0.5 ? -1 : 1;
         fx.callouts.push({ text: side < 0 ? '🚕 taxi! ← kerb' : '🚕 taxi! kerb →', color: PALETTE.amber });
       } else if (phase === 'warn' && timer <= 0) {
         phase = 'drive';
@@ -99,7 +106,7 @@ function taxis(): CityEvents {
             spray.push({ x: lane, y: s.fy, vx: -side * (1 + Math.random() * 3), vy: (Math.random() - 0.7) * 2.5, life: 1 });
           }
         }
-        if (y > s.worldY + s.H / 2 + 120) { phase = 'idle'; timer = every(7, 11, s.difficulty); }
+        if (y > s.worldY + s.H / 2 + 120) { phase = 'idle'; timer = every(rng, 7, 11, s.difficulty); }
       }
 
       for (const p of spray) { p.x += p.vx * f; p.y += p.vy * f; p.vy += 0.15 * f; p.life -= dt * 1.8; }
@@ -194,7 +201,7 @@ const GUST_SHIFT = 28;
 
 interface Petal { x: number; y: number; vx: number; vy: number; rot: number; life: number }
 
-function gusts(): CityEvents {
+function gusts(rng: Rng): CityEvents {
   let phase: 'idle' | 'warn' | 'blow' = 'idle';
   let timer = 6;
   let dir = 1;
@@ -218,12 +225,12 @@ function gusts(): CityEvents {
 
       if (phase === 'idle' && timer <= 0) {
         phase = 'warn'; timer = GUST_WARN;
-        dir = Math.random() < 0.5 ? -1 : 1;
+        dir = rng() < 0.5 ? -1 : 1;
         fx.callouts.push({ text: dir > 0 ? '🌸 gust →' : '← gust 🌸', color: '#f7a8c8' });
       } else if (phase === 'warn' && timer <= 0) {
         phase = 'blow'; timer = GUST_TIME;
       } else if (phase === 'blow') {
-        if (timer <= 0) { phase = 'idle'; timer = every(7, 11, s.difficulty); }
+        if (timer <= 0) { phase = 'idle'; timer = every(rng, 7, 11, s.difficulty); }
         else strength = Math.sin(Math.PI * (1 - timer / GUST_TIME));
       }
       fx.wind = dir * GUST_PUSH * strength;
@@ -268,7 +275,7 @@ const AWNING_R = 48;
 
 interface Awning { x: number; y: number; side: number; seed: number }
 
-function awnings(): CityEvents {
+function awnings(rng: Rng): CityEvents {
   let list: Awning[] = [];
   let timer = 2;
   let wasSheltered = false;
@@ -278,9 +285,9 @@ function awnings(): CityEvents {
       const fx = calm();
       timer -= dt;
       if (timer <= 0) {
-        const side = Math.random() < 0.5 ? -1 : 1;
-        list.push({ x: side < 0 ? s.left : s.right, y: s.worldY - s.H / 2 - AWNING_R - 20, side, seed: Math.random() * 100 });
-        timer = 4 + Math.random() * 3;
+        const side = rng() < 0.5 ? -1 : 1;
+        list.push({ x: side < 0 ? s.left : s.right, y: s.worldY - s.H / 2 - AWNING_R - 20, side, seed: rng() * 100 });
+        timer = 4 + rng() * 3;
       }
       // keep awnings on the kerb if the road width changes with a resize
       for (const a of list) a.x = a.side < 0 ? s.left : s.right;

@@ -7,10 +7,16 @@ import {
   type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
+import {
+  SQUARE_W, SQUARE_H, SQUARE_INSET, SQUARE_COVER_R, SQUARE_GOALS, TOGETHER_GRACE, ALONE_SHARE,
+  pickGoalSpot, type SquareGoalType,
+} from '../_lib/rules';
+import { makeRng, newSeed, type Rng } from '../_lib/rng';
+import { WASD, ARROWS, pads, padPress, readStick, type KeySet } from '../_lib/input';
 
 // ── types ──────────────────────────────────────────────────────────────────
 interface Drop  { x:number; y:number; len:number; spd:number; a:number }
-interface Goal  { x:number; y:number; emoji:string; pts:number; dur:number; pause:number; label:string; age:number; pulse:number; reached:boolean; pauseLeft:number }
+interface Goal extends SquareGoalType { x:number; y:number; age:number; pulse:number; reached:boolean; pauseLeft:number }
 interface Spark { x:number; y:number; vx:number; vy:number; life:number; emoji:string }
 
 type Screen = 'menu' | 'playing' | 'between' | 'end';
@@ -19,33 +25,22 @@ type Player = 'p1' | 'p2';
 /** One round of the match: who held the umbrella, what each side scored, how it ended. */
 interface RoundResult { woman:Player; wScore:number; fScore:number; time:number; end:'soaked'|'home' }
 
-const GOAL_TYPES: Omit<Goal,'x'|'y'|'age'|'pulse'|'reached'|'pauseLeft'>[] = [
-  { emoji:'🐕', pts:120, dur:9,  pause:2.0, label:'pet the dog'    },
-  { emoji:'🍊', pts:80,  dur:7,  pause:1.5, label:'fruit stand'    },
-  { emoji:'🌸', pts:60,  dur:11, pause:1.0, label:'flower shop'    },
-  { emoji:'☕', pts:70,  dur:9,  pause:2.0, label:'coffee stop'    },
-  { emoji:'🚌', pts:150, dur:5,  pause:0.5, label:'catch the bus'  },
-  { emoji:'📬', pts:50,  dur:12, pause:1.5, label:'post a letter'  },
-  { emoji:'🐈', pts:90,  dur:8,  pause:1.8, label:'pet the cat'    },
-  { emoji:'🎵', pts:80,  dur:7,  pause:1.2, label:'street music'   },
-];
-
 // A match is two rounds with the roles swapped, so each player holds the
 // umbrella once and follows once: whichever role is stronger, both get it.
 const ROUND_TIME = 60;
-/** Goals collected while the follower is out in the rain pay this share. */
-const ALONE_SHARE = 0.5;
 /** Follower points per second under cover, before difficulty and streak. */
 const COVER_PTS = 6;
 /** Round-ending bonuses, × difficulty: the woman for shaking the follower off, the follower for making it home. */
 const SHAKE_BONUS = 250;
 const HOME_BONUS = 250;
 
-/** Each player keeps their keys and colour all match; only the role swaps. */
-const PLAYERS: Record<Player, { name:string; color:string; rgb:string; keys:[string,string,string,string]; keyLabel:string; padLabel:string }> = {
-  p1: { name:'P1', color:'#7cc24f', rgb:'124,194,79', keys:['a','d','w','s'], keyLabel:'WASD', padLabel:'left D-pad' },
-  p2: { name:'P2', color:'#e08a3c', rgb:'224,138,60', keys:['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'], keyLabel:'arrows', padLabel:'right D-pad' },
+/** Each player keeps their keys, gamepad and colour all match; only the role swaps. */
+const PLAYERS: Record<Player, { name:string; color:string; rgb:string; keys:KeySet; pad:number; keyLabel:string; padLabel:string }> = {
+  p1: { name:'P1', color:'#7cc24f', rgb:'124,194,79', keys:WASD, pad:0, keyLabel:'WASD or pad 1', padLabel:'left D-pad' },
+  p2: { name:'P2', color:'#e08a3c', rgb:'224,138,60', keys:ARROWS, pad:1, keyLabel:'arrows or pad 2', padLabel:'right D-pad' },
 };
+/** Velocity kept each 60 Hz frame. */
+const DAMP = 0.82;
 const other = (p:Player): Player => p==='p1' ? 'p2' : 'p1';
 
 /** Totals per player across finished rounds plus the live one. */
@@ -65,7 +60,9 @@ export default function TwoPlayerGame() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef<Record<string, boolean>>({});
   // start/stop handles into the canvas loop, set up by the effect below
-  const gameRef = useRef<{ start(woman:Player): void; stop(): void } | null>(null);
+  const gameRef = useRef<{ start(woman:Player, seed:number, round:number): void; stop(): void } | null>(null);
+  // what A / Start on a gamepad does on the current overlay
+  const padActionRef = useRef<(() => void) | null>(null);
 
   const [screen,    setScreen]    = useState<Screen>('menu');
   const [rounds,    setRounds]    = useState<RoundResult[]>([]);
@@ -80,10 +77,16 @@ export default function TwoPlayerGame() {
     const cv  = cvRef.current!;
     const bx  = bgc.getContext('2d')!;
     const ctx = cv.getContext('2d')!;
-    const W = 480, H = 620;
+    const W = SQUARE_W, H = SQUARE_H;
+    const R = SQUARE_COVER_R;
 
     // ── mutable game state (lives entirely in this effect) ──
     let woman: Player = 'p1';
+    let round = 1;
+    // goals for this round: both rounds share a seed, so each player holds the umbrella over the same goals
+    let rng: Rng = makeRng(0);
+    // last time the follower was under cover, for the together grace
+    let coveredAt = 0;
     let wx=W/2, wy=H*.42, wvx=0, wvy=0;
     // the follower starts inside cover, so nobody can win by standing still
     let fx=W/2+30, fy=H*.42+40, fvx=0, fvy=0;
@@ -97,7 +100,7 @@ export default function TwoPlayerGame() {
     let raf=0, lt=0, active=false;
 
     // Street geometry: a wide roadway with cobbled pavement down both sides.
-    const INSET = 58;
+    const INSET = SQUARE_INSET;
     const view: StreetView = {
       W, H, left: INSET, right: W - INSET, scroll: 0, walk: walkWidth(W, W - INSET * 2),
     };
@@ -108,12 +111,8 @@ export default function TwoPlayerGame() {
     const onUp   = (e:KeyboardEvent) => { KEYS[e.key]=false; };
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup',   onUp);
-    const held = (k:string) => KEYS[k] || KEYS[k.toUpperCase()];
-    /** Direction a player is holding, as [x, y] in -1..1. */
-    function stick(p:Player): [number, number] {
-      const [l, r, u, d] = PLAYERS[p].keys;
-      return [(held(r)?1:0) - (held(l)?1:0), (held(d)?1:0) - (held(u)?1:0)];
-    }
+    /** A player's keys or gamepad, as a stick. */
+    const stick = (p:Player) => readStick(KEYS, PLAYERS[p].keys, pads()[PLAYERS[p].pad]);
 
     // ── helpers ──
     function newDrop(anywhere=false): Drop {
@@ -121,15 +120,14 @@ export default function TwoPlayerGame() {
     }
 
     function spawnGoal() {
-      let gx=0, gy=0, tries=0;
-      do { gx=60+Math.random()*(W-120); gy=70+Math.random()*(H-140); tries++; }
-      while (tries<20 && Math.hypot(gx-wx, gy-wy)<110);
-      const tp = GOAL_TYPES[Math.floor(Math.random()*GOAL_TYPES.length)];
-      goals.push({ ...tp, x:gx, y:gy, age:0, pulse:0, reached:false, pauseLeft:0 });
+      const tp = SQUARE_GOALS[Math.floor(rng()*SQUARE_GOALS.length)];
+      const at = pickGoalSpot(rng, { x:wx, y:wy }, 110);
+      goals.push({ ...tp, x:at.x, y:at.y, age:0, pulse:0, reached:false, pauseLeft:0 });
     }
 
-    function initRound(w:Player) {
-      woman = w;
+    function initRound(w:Player, seed:number, n:number) {
+      woman = w; round = n;
+      rng = makeRng(seed); coveredAt = 0;
       wx=W/2; wy=H*.42; wvx=0; wvy=0;
       fx=W/2+30; fy=H*.42+40; fvx=0; fvy=0;
       wet=0; wScore=0; fScore=0; elapsed=0;
@@ -146,8 +144,7 @@ export default function TwoPlayerGame() {
       active=false;
       const result: RoundResult = { woman, wScore:Math.round(wScore), fScore:Math.round(fScore), time:Math.round(elapsed), end };
       setRounds(rs => [...rs, result]);
-      // P1 always holds the umbrella first, so P2 holding it means round 2
-      setScreen(woman==='p2' ? 'end' : 'between');
+      setScreen(round>=2 ? 'end' : 'between');
     }
 
     // ── update ──
@@ -161,26 +158,27 @@ export default function TwoPlayerGame() {
       for (const d of drops) { d.y+=d.spd*(1+difficulty*.2); if(d.y>H) Object.assign(d,newDrop()); }
       tickRipples(ripples, dt, 12, () => ({ x: Math.random()*W, y: Math.random()*H }));
 
+      // Movement scales with frame time, so a 144 Hz screen turns no sharper than a 60 Hz one.
+      const f = dt*60, keep = Math.pow(DAMP, f);
+
       // the woman — a little faster, so shaking the follower off is possible
-      const [wdx, wdy] = stick(woman);
-      const wspd = (3.8+difficulty*.4)*dt*60;
-      wvx += wdx*wspd*.18; wvy += wdy*wspd*.18;
-      wvx*=.82; wvy*=.82;
-      wx+=wvx; wy+=wvy;
+      const ws = stick(woman);
+      const wspd = (3.8+difficulty*.4)*.18;
+      wvx = (wvx + ws.x*wspd*f)*keep; wvy = (wvy + ws.y*wspd*f)*keep;
+      wx+=wvx*f; wy+=wvy*f;
       wx=Math.max(16,Math.min(W-16,wx));
       wy=Math.max(16,Math.min(H-16,wy));
 
       // the follower
-      const [fdx, fdy] = stick(other(woman));
-      const fspd = (3.4+difficulty*.3)*dt*60;
-      fvx += fdx*fspd*.18; fvy += fdy*fspd*.18;
-      fvx*=.82; fvy*=.82;
-      fx+=fvx; fy+=fvy;
+      const fs = stick(other(woman));
+      const fspd = (3.4+difficulty*.3)*.18;
+      fvx = (fvx + fs.x*fspd*f)*keep; fvy = (fvy + fs.y*fspd*f)*keep;
+      fx+=fvx*f; fy+=fvy*f;
       fx=Math.max(10,Math.min(W-10,fx));
       fy=Math.max(10,Math.min(H-10,fy));
 
-      const R = 76+(difficulty>2?-8:0);
       const sep = Math.hypot(fx-wx, fy-wy);
+      if (sep<=R) coveredAt = elapsed;
 
       // goals — full value only with the follower under the umbrella
       goalTimer+=dt;
@@ -189,14 +187,14 @@ export default function TwoPlayerGame() {
         g.age+=dt; g.pulse=(g.pulse+dt*3)%(Math.PI*2);
         if (!g.reached && g.pauseLeft<=0 && Math.hypot(wx-g.x, wy-g.y)<20) {
           g.reached=true; g.pauseLeft=g.pause;
-          const together = sep<=R;
+          const together = elapsed-coveredAt <= TOGETHER_GRACE;
           const pts = Math.round(g.pts*difficulty*(together ? streak.mult : ALONE_SHARE));
           wScore+=pts;
           floats.push({ x:wx, y:wy-34, text: together ? `+${pts} ${g.label}` : `+${pts} alone`, color: together ? PALETTE.cream : '#ef5844', life:1.2 });
           sparks.push(...Array.from({length:6}, ()=>({ x:wx, y:wy, vx:(Math.random()-.5)*4, vy:(Math.random()-.5)*4, life:1, emoji:g.emoji })));
           if (goals.filter(g2=>!g2.reached).length<2) spawnGoal();
         }
-        if (g.pauseLeft>0) { g.pauseLeft-=dt; wvx*=.9; wvy*=.9; }
+        if (g.pauseLeft>0) { g.pauseLeft-=dt; wvx*=Math.pow(.9, f); wvy*=Math.pow(.9, f); }
       }
       goals = goals.filter(g=>g.reached||g.age<g.dur);
 
@@ -245,7 +243,6 @@ export default function TwoPlayerGame() {
       ctx.clearRect(0,0,W,H);
       ctx.lineCap='round';
 
-      const R = 76+(difficulty>2?-8:0);
       const sep = Math.hypot(fx-wx,fy-wy);
       const dry: DryZone[] = [{ x: wx, y: wy, r: R }];
 
@@ -310,16 +307,18 @@ export default function TwoPlayerGame() {
     }
 
     // ── loop ──
+    const pressedStart = padPress();
     function loop(ts:number) {
       const dt = Math.min((ts-lt)/1000,.05); lt=ts;
+      if (!active && pressedStart()) padActionRef.current?.();
       drawBg(); drawScene();
       if (active) update(dt);
       raf=requestAnimationFrame(loop);
     }
 
     gameRef.current = {
-      start(w) {
-        initRound(w);
+      start(w, seed, n) {
+        initRound(w, seed, n);
         active=true; lt=performance.now();
         wrapRef.current?.focus();
       },
@@ -340,13 +339,18 @@ export default function TwoPlayerGame() {
   }, []);
 
   // ── React handlers ──
+  const [seed, setSeed] = useState(0);
   const startMatch = () => {
+    // a coin flip decides who holds the umbrella first; both rounds share a seed
+    const first: Player = Math.random()<.5 ? 'p1' : 'p2';
+    const s = newSeed();
+    setSeed(s);
     setRounds([]);
-    gameRef.current?.start('p1');
+    gameRef.current?.start(first, s, 1);
     setScreen('playing');
   };
   const nextRound = () => {
-    gameRef.current?.start('p2');
+    gameRef.current?.start(other(rounds[0].woman), seed, 2);
     setScreen('playing');
   };
   const handleMenu = () => {
@@ -355,12 +359,17 @@ export default function TwoPlayerGame() {
     setScreen('menu');
   };
 
+  // A / Start on a gamepad presses the overlay's main button.
+  useEffect(() => {
+    padActionRef.current = screen==='menu' || screen==='end' ? startMatch : screen==='between' ? nextRound : null;
+  });
+
   const live = screen==='playing' ? hud : undefined;
   const score = totals(rounds, live);
   const last = rounds[rounds.length-1];
   const winner = score.p1===score.p2 ? null : score.p1>score.p2 ? 'p1' : 'p2';
   const keysOf = (p:Player) => isTouchDevice ? PLAYERS[p].padLabel : PLAYERS[p].keyLabel;
-  const roleOf = (p:Player) => (live?.woman ?? 'p1')===p ? 'umbrella' : 'follower';
+  const roleOf = (p:Player) => live?.woman===p ? 'umbrella' : 'follower';
 
   return (
     <div
@@ -370,8 +379,8 @@ export default function TwoPlayerGame() {
       className="relative w-full h-full outline-none"
       style={{ background: PALETTE.night, cursor:'default' }}
     >
-      <canvas ref={bgRef} width={480} height={620} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
-      <canvas ref={cvRef} width={480} height={620} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
+      <canvas ref={bgRef} width={SQUARE_W} height={SQUARE_H} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
+      <canvas ref={cvRef} width={SQUARE_W} height={SQUARE_H} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
       <VirtualDPad
         keysRef={keysRef}
         keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
@@ -443,9 +452,9 @@ export default function TwoPlayerGame() {
             ))}
           </div>
           <button onClick={startMatch} style={{ padding:'13px 44px', borderRadius:28, background:'var(--fog)', color:'#0d110b', border:'none', fontSize:15, fontWeight:500, cursor:'pointer', fontFamily:'inherit', marginBottom:10 }}>
-            Start — P1 holds the umbrella
+            Start — coin flip for the umbrella
           </button>
-          <p style={{ fontSize:11, color:'rgba(240,236,224,.2)' }}>click here first, then use keyboard</p>
+          <p style={{ fontSize:11, color:'rgba(240,236,224,.3)' }}>or press A on a gamepad</p>
         </div>
       )}
 
