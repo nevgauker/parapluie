@@ -1,10 +1,11 @@
 /**
  * Player input as an analog stick, from the keyboard or a gamepad.
  *
- * Keys come from a shared held-keys map, which the touch D-pads also write
- * to. Gamepads come from the Gamepad API, which has no move events and has
- * to be polled every frame. Pads are assigned in the order they connected:
- * the first is P1, the second P2.
+ * Keys come from a shared held-keys map. Gamepads come from the Gamepad API,
+ * which has no move events and has to be polled every frame; which pad
+ * belongs to which player is up to seats.ts. Touch thumbsticks
+ * (components/TouchStick.tsx) produce a stick of their own, and `strongest`
+ * picks whichever input is pushed hardest.
  */
 
 export interface Stick { x: number; y: number }
@@ -43,6 +44,11 @@ function padStick(pad: Gamepad | undefined): Stick {
   // rescale past the deadzone so a light tilt still starts from zero
   const k = Math.min(1, (m - DEADZONE) / (1 - DEADZONE)) / m;
   return { x: x * k, y: y * k };
+}
+
+/** Whichever of several inputs is pushed hardest (keys, pad, touch stick). */
+export function strongest(...sticks: Stick[]): Stick {
+  return sticks.reduce((a, b) => (Math.hypot(b.x, b.y) > Math.hypot(a.x, a.y) ? b : a), STILL);
 }
 
 /** A player's input: whichever of their keys or their pad is pushed harder. */

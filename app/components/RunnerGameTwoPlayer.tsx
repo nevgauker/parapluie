@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import VirtualDPad from './VirtualDPad';
+import TouchStick from './TouchStick';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
   drawDryZone, drawGoalMarker, drawObstacle, drawWetOverlay, drawHud,
@@ -11,7 +11,7 @@ import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
 import { cityEvents } from '../_lib/cityEvents';
 import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
 import { pushOut } from '../_lib/collide';
-import { WASD, ARROWS, pads, padPress, readStick, PAD_START } from '../_lib/input';
+import { WASD, ARROWS, pads, padPress, readStick, strongest, PAD_START, type Stick } from '../_lib/input';
 import { PLAYERS, tag, drawTag, controlsText } from '../_lib/players';
 import { padFor } from '../_lib/seats';
 import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
@@ -48,6 +48,9 @@ export default function RunnerGameTwoPlayer() {
   const ref = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ gameState });
   const keysRef = useRef<Record<string, boolean>>({});
+  // each player's floating thumbstick: P1 on the left half of the screen, P2 on the right
+  const touchP1 = useRef<Stick>({ x: 0, y: 0 });
+  const touchP2 = useRef<Stick>({ x: 0, y: 0 });
   const isTouchRef = useRef(false);
 
   useEffect(() => { stateRef.current = { gameState }; }, [gameState]);
@@ -157,8 +160,8 @@ export default function RunnerGameTwoPlayer() {
       dryShift = weather.dryShift;
 
       // P1 steers the woman, P2 the follower: keys, or the first and second pad.
-      const p1 = readStick(KEYS, WASD, padFor('p1'));
-      const p2 = readStick(KEYS, ARROWS, padFor('p2'));
+      const p1 = strongest(readStick(KEYS, WASD, padFor('p1')), touchP1.current);
+      const p2 = strongest(readStick(KEYS, ARROWS, padFor('p2')), touchP2.current);
       const keep = Math.pow(DAMP, f);
 
       wvx = (wvx + p1.x * WALK_PUSH * f) * keep;
@@ -366,8 +369,8 @@ export default function RunnerGameTwoPlayer() {
   return (
     <div className="relative w-full h-full" style={{ background: PALETTE.night }}>
       <canvas ref={ref} width={ARENA_W} height={ARENA_H} className="block w-full h-full" style={{ cursor: 'default', display: 'block', touchAction: 'none', objectFit: 'contain' }} />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }} position="left" color={PLAYERS.p1.color} label={tag('p1')} />
-      <VirtualDPad keysRef={keysRef} keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }} position="right" color={PLAYERS.p2.color} label={tag('p2')} />
+      <TouchStick stickRef={touchP1} zone="left" color={PLAYERS.p1.color} hint={`${tag('p1')} drag`} />
+      <TouchStick stickRef={touchP2} zone="right" color={PLAYERS.p2.color} hint={`${tag('p2')} drag`} />
 
       {gameState === 'menu' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', borderRadius: 16 }}>

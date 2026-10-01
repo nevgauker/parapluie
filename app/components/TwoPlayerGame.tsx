@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import VirtualDPad from './VirtualDPad';
+import TouchStick from './TouchStick';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
   drawDryZone, drawGoalMarker, drawWetOverlay, walkWidth, drawFloatTexts, tickFloatTexts, drawPrompt,
@@ -12,7 +12,7 @@ import {
   pickGoalSpot, type SquareGoalType,
 } from '../_lib/rules';
 import { makeRng, newSeed, type Rng } from '../_lib/rng';
-import { padPress, readStick, PAD_START } from '../_lib/input';
+import { padPress, readStick, strongest, PAD_START, type Stick } from '../_lib/input';
 import { PLAYERS, PLAYER_IDS, other, tag, drawTag, type Player } from '../_lib/players';
 import { padFor } from '../_lib/seats';
 import { watchFocus, PAUSE_KEYS } from '../_lib/focus';
@@ -59,6 +59,9 @@ export default function TwoPlayerGame() {
   const cvRef   = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const keysRef = useRef<Record<string, boolean>>({});
+  // each player's floating thumbstick: P1 on the left half of the screen, P2 on the right
+  const touchP1 = useRef<Stick>({ x: 0, y: 0 });
+  const touchP2 = useRef<Stick>({ x: 0, y: 0 });
   // start/stop handles into the canvas loop, set up by the effect below
   const gameRef = useRef<{ start(woman:Player, seed:number, round:number): void; stop(): void } | null>(null);
   // what A / Start on a gamepad does on the current overlay
@@ -116,7 +119,7 @@ export default function TwoPlayerGame() {
     window.addEventListener('keydown', onDown);
     window.addEventListener('keyup',   onUp);
     /** A player's keys or gamepad, as a stick. */
-    const stick = (p:Player) => readStick(KEYS, PLAYERS[p].keys, padFor(p));
+    const stick = (p:Player) => strongest(readStick(KEYS, PLAYERS[p].keys, padFor(p)), (p==='p1' ? touchP1 : touchP2).current);
     // Losing focus mid-round pauses it and lets go of every held key.
     const stopWatching = watchFocus(KEYS, () => { if (active) paused = true; });
 
@@ -382,7 +385,7 @@ export default function TwoPlayerGame() {
   const score = totals(rounds, live);
   const last = rounds[rounds.length-1];
   const winner = score.p1===score.p2 ? null : score.p1>score.p2 ? 'p1' : 'p2';
-  const keysOf = (p:Player) => isTouchDevice ? `${PLAYERS[p].padSide} D-pad` : `${PLAYERS[p].keyLabel} or pad`;
+  const keysOf = (p:Player) => isTouchDevice ? `${PLAYERS[p].padSide} half` : `${PLAYERS[p].keyLabel} or pad`;
   const roleOf = (p:Player) => live?.woman===p ? 'umbrella' : 'follower';
 
   return (
@@ -395,20 +398,8 @@ export default function TwoPlayerGame() {
     >
       <canvas ref={bgRef} width={SQUARE_W} height={SQUARE_H} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
       <canvas ref={cvRef} width={SQUARE_W} height={SQUARE_H} className="absolute inset-0 w-full h-full" style={{ objectFit: 'contain', touchAction: 'none' }} />
-      <VirtualDPad
-        keysRef={keysRef}
-        keyMap={{ up: 'w', down: 's', left: 'a', right: 'd' }}
-        position="left"
-        color={PLAYERS.p1.color}
-        label={tag('p1')}
-      />
-      <VirtualDPad
-        keysRef={keysRef}
-        keyMap={{ up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' }}
-        position="right"
-        color={PLAYERS.p2.color}
-        label={tag('p2')}
-      />
+      <TouchStick stickRef={touchP1} zone="left" color={PLAYERS.p1.color} hint={`${tag('p1')} drag`} />
+      <TouchStick stickRef={touchP2} zone="right" color={PLAYERS.p2.color} hint={`${tag('p2')} drag`} />
 
       {/* ── HUD ── */}
       {screen==='playing' && (

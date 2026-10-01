@@ -3,13 +3,12 @@
  * whole keyboard (WASD and arrows) and any gamepad steer that one walker.
  */
 
-import { WASD, ARROWS, pads, readStick, type Stick } from '../../_lib/input';
+import { WASD, ARROWS, pads, readStick, strongest, type Stick } from '../../_lib/input';
 import { isPaused, playTime, type Match, type RoomState, type Seat } from '../../_lib/online/protocol';
 
-export function onlineStick(keys: Record<string, boolean>): Stick {
-  const a = readStick(keys, WASD, pads()[0]);
-  const b = readStick(keys, ARROWS);
-  return Math.hypot(b.x, b.y) > Math.hypot(a.x, a.y) ? b : a;
+/** Keys, the first gamepad, or the on-screen thumbstick: whichever is pushed hardest. */
+export function onlineStick(keys: Record<string, boolean>, touch: Stick): Stick {
+  return strongest(readStick(keys, WASD, pads()[0]), readStick(keys, ARROWS), touch);
 }
 
 /** What a finished round hands back to the lobby. */
