@@ -862,9 +862,10 @@ export function drawUmbrella(ctx: CanvasRenderingContext2D, x: number, y: number
 
 /**
  * The sheltered circle. `strain` (0..1) is how close the follower is to falling
- * out of cover; the rim warms to amber and then to red.
+ * out of cover; the rim warms to amber and then to red. `streak` (1..4) is the
+ * dry-streak multiplier: a golden halo that thickens as it climbs.
  */
-export function drawDryZone(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, strain = 0) {
+export function drawDryZone(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, strain = 0, streak = 1) {
   const pool = ctx.createRadialGradient(x, y, r * 0.2, x, y, r);
   pool.addColorStop(0, 'rgba(255,236,190,0.055)');
   pool.addColorStop(0.7, 'rgba(255,236,190,0.022)');
@@ -873,6 +874,14 @@ export function drawDryZone(ctx: CanvasRenderingContext2D, x: number, y: number,
   ctx.beginPath();
   ctx.arc(x, y, r, 0, TAU);
   ctx.fill();
+
+  if (streak > 1) {
+    ctx.strokeStyle = `rgba(255,214,130,${0.05 + (streak - 1) * 0.05})`;
+    ctx.lineWidth = 2 + streak * 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.stroke();
+  }
 
   const rim = strain > 0.88
     ? `rgba(239,88,68,${0.30 + Math.min(1, strain) * 0.25})`
@@ -1005,7 +1014,7 @@ export function drawWetOverlay(ctx: CanvasRenderingContext2D, W: number, H: numb
  * Score on the left, wetness meter on the right — cream on wet stone.
  * `top` pushes it below any overlay chrome the page draws over the canvas.
  */
-export function drawHud(ctx: CanvasRenderingContext2D, W: number, score: number, wet: number, top = 14) {
+export function drawHud(ctx: CanvasRenderingContext2D, W: number, score: number, wet: number, top = 14, streak = 1) {
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';
   ctx.font = '500 10px Inter,sans-serif';
@@ -1013,7 +1022,14 @@ export function drawHud(ctx: CanvasRenderingContext2D, W: number, score: number,
   ctx.fillText('SCORE', 14, top);
   ctx.font = '600 21px Inter,sans-serif';
   ctx.fillStyle = PALETTE.cream;
-  ctx.fillText(Math.round(score).toString(), 14, top + 13);
+  const label = Math.round(score).toString();
+  ctx.fillText(label, 14, top + 13);
+  if (streak > 1) {
+    const sx = 14 + ctx.measureText(label).width + 8;
+    ctx.font = '600 13px Inter,sans-serif';
+    ctx.fillStyle = PALETTE.umbrellaLit;
+    ctx.fillText(`x${streak} DRY`, sx, top + 19);
+  }
 
   const bw = 100, bx = W - 14 - bw, by = top + 3;
   ctx.fillStyle = 'rgba(10,13,16,0.55)';
@@ -1033,6 +1049,30 @@ export function drawHud(ctx: CanvasRenderingContext2D, W: number, score: number,
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(240,236,224,0.4)';
   ctx.fillText('WETNESS', W - 14, top + 13);
+}
+
+/** A score callout that rises and fades; `life` runs from 1 down to 0. */
+export interface FloatText { x: number; y: number; text: string; color: string; life: number }
+
+export function tickFloatTexts(list: FloatText[], dt: number): FloatText[] {
+  for (const f of list) { f.y -= 28 * dt; f.life -= dt * 1.1; }
+  return list.filter(f => f.life > 0);
+}
+
+export function drawFloatTexts(ctx: CanvasRenderingContext2D, list: FloatText[]) {
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 12px Inter,sans-serif';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(10,13,16,0.6)';
+  for (const f of list) {
+    ctx.globalAlpha = Math.min(1, f.life * 1.6);
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.restore();
 }
 
 /** Centred prompt over a darkened street, used by every game's idle state. */

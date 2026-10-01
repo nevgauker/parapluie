@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from 'react';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
   drawDryZone, drawGoalMarker, drawObstacle, drawWetOverlay, drawHud,
-  drawPrompt, walkWidth,
-  type StreetView, type DryZone, type Ripple,
+  drawPrompt, walkWidth, drawFloatTexts, tickFloatTexts,
+  type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
+import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean }
@@ -95,6 +96,10 @@ export default function RunnerGameSolo() {
     // her rhythm: walk to `target`, linger for pauseLeft, then dash for dashLeft
     let target: Goal | null = null;
     let pauseLeft = 0, dashLeft = 0;
+    // the follower's reward for playing the rim: multiplier + close-call bonus
+    const streak = newDryStreak();
+    // callouts live in screen space so they rise instead of scrolling away
+    let floats: FloatText[] = [];
 
     const cityConfig = CITIES[city];
 
@@ -254,7 +259,9 @@ export default function RunnerGameSolo() {
         if (!g.reached && dw < 20) {
           g.reached = true;
           pauseLeft = g.pause; dashLeft = 0; target = null;
-          score += Math.round(g.pts * difficulty);
+          const pts = Math.round(g.pts * difficulty * streak.mult);
+          score += pts;
+          floats.push({ x: wx, y: project(wy) - 30, text: `+${pts}`, color: PALETTE.cream, life: 1 });
           sparks.push(...Array.from({ length: 5 }, () => ({ x: wx, y: wy, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji: g.emoji })));
           if (goals.filter(g => !g.reached).length < 3) spawnGoal();
         }
@@ -277,6 +284,10 @@ export default function RunnerGameSolo() {
 
       // Wetness - safe while inside the umbrella's cover
       const sep = Math.hypot(fx - wx, fy - wy);
+      const edge = tickDryStreak(streak, sep, COVER_R, dt, difficulty);
+      score += edge.pts;
+      floats.push(...streakCallouts(edge.events, fx, project(fy)));
+      floats = tickFloatTexts(floats, dt);
       if (sep > COVER_R) wet = Math.min(1, wet + dt * 0.15);
       else wet = Math.max(0, wet - dt * 0.08);
 
@@ -320,7 +331,7 @@ export default function RunnerGameSolo() {
         }
       }
 
-      drawDryZone(ctx, wx, wScreenY, COVER_R, sep / COVER_R);
+      drawDryZone(ctx, wx, wScreenY, COVER_R, sep / COVER_R, streak.mult);
 
       // The follower walks bare-headed; she is hidden under the canopy.
       drawWalker(ctx, fx, fScreenY, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
@@ -342,8 +353,9 @@ export default function RunnerGameSolo() {
         ctx.restore();
       }
 
+      drawFloatTexts(ctx, floats);
       drawWetOverlay(ctx, W, H, fx, fScreenY, wet);
-      drawHud(ctx, W, score, wet, 54);
+      drawHud(ctx, W, score, wet, 54, streak.mult);
 
       if (!running) {
         drawPrompt(
