@@ -4,9 +4,12 @@ import VirtualDPad from './VirtualDPad';
 import {
   PALETTE, drawGround, drawProps, drawRainField, drawRipples, tickRipples, drawWalker,
   drawDryZone, drawGoalMarker, drawObstacle, drawWetOverlay, drawHud,
-  drawPrompt, walkWidth,
-  type StreetView, type DryZone, type Ripple,
+  drawPrompt, walkWidth, drawFloatTexts, tickFloatTexts,
+  type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
+import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
+import { cityEvents } from '../_lib/cityEvents';
+import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; pauseLeft: number }
@@ -15,31 +18,14 @@ interface Obstacle { id: number; y: number; x: number; w: number; h: number; emo
 
 type GameState = 'menu' | 'playing' | 'dead';
 
-const CITIES = {
-  osaka: { name: 'Osaka', obstacles: [{ emoji: '🏗️', w: 60, h: 40 }, { emoji: '🚗', w: 80, h: 50 }, { emoji: '⚙️', w: 50, h: 50 }] },
-  tokyo: { name: 'Tokyo', obstacles: [{ emoji: '🏢', w: 70, h: 60 }, { emoji: '🤖', w: 55, h: 55 }, { emoji: '📡', w: 40, h: 70 }] },
-  paris: { name: 'Paris', obstacles: [{ emoji: '🎨', w: 50, h: 50 }, { emoji: '🚴', w: 65, h: 45 }, { emoji: '🥖', w: 60, h: 40 }] },
-};
-type City = keyof typeof CITIES;
-
-const GOAL_TYPES = [
-  { emoji: '🐕', pts: 120, dur: 9, pause: 2.0 },
-  { emoji: '🍊', pts: 80, dur: 7, pause: 1.5 },
-  { emoji: '🌸', pts: 60, dur: 11, pause: 1.0 },
-  { emoji: '☕', pts: 70, dur: 9, pause: 2.0 },
-  { emoji: '🚌', pts: 150, dur: 5, pause: 0.5 },
-  { emoji: '📬', pts: 50, dur: 12, pause: 1.5 },
-];
-
-const STREET_WIDTH = 320;
-/** How far P2 can stray before the rain reaches them. */
+/** How far P2 can stray before the rain reaches them, before the city's scaling. */
 const COVER_R = 72;
 /** Drawn size of the canopy itself — the shelter circle is wider. */
 const CANOPY_R = 25;
 
 export default function RunnerGameTwoPlayer() {
   const [gameState, setGameState] = useState<GameState>('menu');
-  const [city, setCity] = useState<City>('tokyo');
+  const [city, setCity] = useState<CityId>('newyork');
   const [endStats, setEndStats] = useState({ score: 0, time: 0 });
   const ref = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ gameState });
@@ -82,10 +68,17 @@ export default function RunnerGameTwoPlayer() {
     let wAngle = 0, fAngle = 0, wPhase = 0, fPhase = 0;
 
     const cityConfig = CITIES[city];
+    const coverR = COVER_R * cityConfig.cover;
+    const events = cityEvents(city);
+    const furnish = cityFurnish(city);
+    // the umbrella's dry spot, blown downwind by Tokyo's gusts
+    let dryShift = 0;
+    // hazard warnings, in screen space
+    let floats: FloatText[] = [];
     const KEYS = keysRef.current;
 
     // The roadway narrows on small screens so the sidewalks stay visible.
-    const roadW = () => Math.max(180, Math.min(STREET_WIDTH, W - 56));
+    const roadW = () => Math.max(180, Math.min(cityConfig.road, W - 56));
     const edges = () => { const w = roadW(); return { left: (W - w) / 2, right: (W + w) / 2 }; };
     const project = (y: number) => y - worldY + H / 2;
 
@@ -97,10 +90,10 @@ export default function RunnerGameTwoPlayer() {
     function newDrop(): Drop {
       return { x: Math.random() * W, y: Math.random() * H, len: 10 + Math.random() * 14, spd: 4 + Math.random() * 3, a: 0.1 + Math.random() * 0.12 };
     }
-    for (let i = 0; i < 90; i++) drops.push(newDrop());
+    for (let i = 0; i < cityConfig.rain; i++) drops.push(newDrop());
 
     function spawnGoal() {
-      const type = GOAL_TYPES[Math.floor(Math.random() * GOAL_TYPES.length)];
+      const type = cityConfig.goals[Math.floor(Math.random() * cityConfig.goals.length)];
       const { left, right } = edges();
       const gx = left + 40 + Math.random() * Math.max(20, right - left - 80);
       const gy = worldY - 150 - Math.random() * 200;
@@ -120,7 +113,7 @@ export default function RunnerGameTwoPlayer() {
       t += dt; elapsed += dt; diffTimer += dt;
       if (diffTimer > 12) { diffTimer = 0; difficulty = Math.min(3, difficulty + 0.2); }
 
-      worldY -= (1.5 + difficulty * 0.4) * dt * 60;
+      worldY -= (1.5 + difficulty * 0.4) * cityConfig.pace * dt * 60;
 
       for (const d of drops) {
         d.y += d.spd * (1 + difficulty * 0.2);
@@ -136,6 +129,10 @@ export default function RunnerGameTwoPlayer() {
         x: streetLeft + Math.random() * (streetRight - streetLeft),
         y: worldY - H / 2 + Math.random() * H,
       }));
+
+      // The city's hazard: taxi splashes, gusts, café awnings.
+      const weather = events.tick(dt, { worldY, W, H, left: streetLeft, right: streetRight, difficulty, fx, fy });
+      dryShift = weather.dryShift;
 
       // P1 (woman) - free movement with WASD
       if (KEYS['a'] || KEYS['A']) wvx -= spd;
@@ -159,7 +156,7 @@ export default function RunnerGameTwoPlayer() {
       });
 
       wvx *= 0.88; wvy *= 0.88;
-      wx += wvx; wy += wvy;
+      wx += wvx + weather.wind * dt * 60; wy += wvy;
       wx = Math.max(streetLeft + 20, Math.min(streetRight - 20, wx));
       wy = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, wy));
 
@@ -169,7 +166,7 @@ export default function RunnerGameTwoPlayer() {
       if (KEYS['ArrowUp']) fvy -= spd;
       if (KEYS['ArrowDown']) fvy += spd;
       fvx *= 0.88; fvy *= 0.88;
-      fx += fvx; fy += fvy;
+      fx += fvx + weather.wind * dt * 60; fy += fvy;
       fx = Math.max(streetLeft + 15, Math.min(streetRight - 15, fx));
       fy = Math.max(worldY - H / 2 + 40, Math.min(worldY + H / 2 - 40, fy));
 
@@ -233,10 +230,13 @@ export default function RunnerGameTwoPlayer() {
       }
       obstacles = obstacles.filter(o => o.y > worldY - H - 100);
 
-      // Wetness
-      const sep = Math.hypot(fx - wx, fy - wy);
-      if (sep > COVER_R) wet = Math.min(1, wet + dt * 0.18);
+      // Wetness - safe under the umbrella or an awning
+      const sep = Math.hypot(fx - (wx + dryShift), fy - wy);
+      if (sep > coverR && !weather.sheltered) wet = Math.min(1, wet + dt * 0.18 * cityConfig.soak);
       else wet = Math.max(0, wet - dt * 0.05);
+      wet = Math.min(1, wet + weather.splash);
+      floats.push(...weather.callouts.map(c => ({ ...c, x: fx, y: project(fy) - 44, life: 1.4 })));
+      floats = tickFloatTexts(floats, dt);
 
       sparks.forEach(s => {
         s.x += s.vx; s.y += s.vy; s.life -= dt * 1.5;
@@ -256,14 +256,19 @@ export default function RunnerGameTwoPlayer() {
 
       ctx.clearRect(0, 0, W, H);
       drawGround(ctx, view);
-      drawProps(ctx, view, worldY, t);
+      drawCityRoad(ctx, view, worldY, city);
+      drawProps(ctx, view, worldY, t, furnish);
 
       const wScreenY = project(wy);
       const fScreenY = project(fy);
-      const sep = Math.hypot(fx - wx, fy - wy);
-      const dry: DryZone[] = [{ x: wx, y: wScreenY, r: COVER_R }];
+      const sep = Math.hypot(fx - (wx + dryShift), fy - wy);
+      const dry: DryZone[] = [
+        { x: wx + dryShift, y: wScreenY, r: coverR },
+        ...events.shelters().map(z => ({ ...z, y: project(z.y) })),
+      ];
 
       drawRipples(ctx, ripples, project, dry);
+      events.drawUnder(ctx, project);
 
       obstacles.forEach((obs) => {
         const screenY = project(obs.y);
@@ -278,17 +283,18 @@ export default function RunnerGameTwoPlayer() {
         }
       }
 
-      drawDryZone(ctx, wx, wScreenY, COVER_R, sep / COVER_R);
+      drawDryZone(ctx, wx + dryShift, wScreenY, coverR, sep / coverR);
 
       // P2 walks bare-headed; P1 is hidden under the canopy.
       drawWalker(ctx, fx, fScreenY, { jacket: PALETTE.jacketOlive, accent: '#e08a3c' }, {
         angle: fAngle, phase: fPhase, wet,
       });
       drawWalker(ctx, wx, wScreenY, { jacket: PALETTE.jacketBlue, accent: '#7cc24f' }, {
-        angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06,
+        angle: wAngle, phase: wPhase, umbrella: CANOPY_R, spin: Math.sin(t * 0.7) * 0.06, canopy: cityConfig.canopy,
       });
 
       drawRainField(ctx, drops, H, undefined, dry);
+      events.drawOver(ctx, project);
 
       for (const s of sparks) {
         ctx.save();
@@ -300,6 +306,7 @@ export default function RunnerGameTwoPlayer() {
         ctx.restore();
       }
 
+      drawFloatTexts(ctx, floats);
       drawWetOverlay(ctx, W, H, fx, fScreenY, wet);
       drawHud(ctx, W, score, wet, 54);
 
@@ -348,11 +355,12 @@ export default function RunnerGameTwoPlayer() {
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.78)', borderRadius: 16 }}>
           <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 28, fontWeight: 700, color: 'var(--fog)', marginBottom: 6 }}>Runner</p>
           <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.4)', marginBottom: 28, textAlign: 'center', lineHeight: 1.7 }}>Walk forward together.<br />Collect goals. Stay dry.</p>
-          <div className="flex gap-2 mb-6">
-            {(Object.keys(CITIES) as City[]).map(c => (
+          <div className="flex gap-2 mb-3">
+            {CITY_IDS.map(c => (
               <button key={c} onClick={() => setCity(c)} style={{ padding: '6px 16px', borderRadius: 20, border: '.5px solid', borderColor: city === c ? 'rgba(240,236,224,0.45)' : 'rgba(240,236,224,0.15)', background: city === c ? 'rgba(240,236,224,0.12)' : 'transparent', color: city === c ? 'var(--fog)' : 'rgba(240,236,224,0.45)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>{CITIES[c].name}</button>
             ))}
           </div>
+          <p style={{ fontSize: 11, color: 'rgba(240,236,224,0.45)', marginBottom: 22, textAlign: 'center', maxWidth: 260, lineHeight: 1.6, minHeight: 36 }}>{CITIES[city].hint}</p>
           <button onClick={handleRestart} style={{ padding: '10px 28px', borderRadius: 24, background: 'var(--brick)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'inherit' }}>Start Game</button>
         </div>
       )}

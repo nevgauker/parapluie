@@ -141,7 +141,7 @@ export default function Home() {
           {[
             { icon: '☂', title: 'One umbrella', body: "She carries it. You chase it. The rain doesn't care who you are.", accent: 'var(--umbrella)' },
             { icon: '🎯', title: 'Two roles', body: 'Play as the woman collecting goals — or as the follower trying not to drown.', accent: 'var(--foliage)' },
-            { icon: '🌍', title: 'Three cities', body: 'Osaka, Tokyo, Paris. Each city has its own pace, obstacles, and cruelty.', accent: 'var(--rain)' },
+            { icon: '🌍', title: 'Three cities', body: 'New York, Tokyo, Paris. Taxis splash, gusts blow, cafés shelter. Each city has its own pace and cruelty.', accent: 'var(--rain)' },
           ].map(({ icon, title, body, accent }, idx) => (
             <div key={title} style={{ borderLeft: `3px solid ${accent}`, paddingLeft: 16 }}>
               <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: accent, marginBottom: 8, letterSpacing: 1, opacity: 0.8 }}>
