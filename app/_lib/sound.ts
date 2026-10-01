@@ -112,6 +112,8 @@ class SoundEngine {
     const ctx = this.ready();
     if (!ctx || !this.openGain || !this.canopyGain || !this.rainFilter) return;
     const t = ctx.currentTime;
+    // a bad number from a game must never reach the audio graph (it throws)
+    if (strain !== null && !Number.isFinite(strain)) return;
     if (strain !== null) this.lastRain = performance.now();
     if (strain === null) {
       this.openGain.gain.setTargetAtTime(0, t, 0.3);

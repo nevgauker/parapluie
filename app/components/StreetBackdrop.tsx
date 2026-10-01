@@ -44,7 +44,8 @@ export default function StreetBackdrop() {
     let wx = 0, fx = 0;
 
     function frame(ts: number) {
-      const dt = Math.min((ts - last) / 1000, 0.05);
+      // rAF's timestamp can predate the time a game (re)started: never step backwards
+      const dt = Math.max(0, Math.min((ts - last) / 1000, 0.05));
       last = ts;
       t += dt;
       worldY -= 34 * dt;

@@ -396,7 +396,8 @@ export default function OnlineSquare({ client, match, seat, onOver }: {
     }
 
     function loop(ts: number) {
-      const dt = Math.min((ts - last) / 1000, 0.05);
+      // rAF's timestamp can predate the time a game (re)started: never step backwards
+      const dt = Math.max(0, Math.min((ts - last) / 1000, 0.05));
       last = ts; t += dt;
       const now = client.now();
       const secs = playTime(live(), now) / 1000;

@@ -325,7 +325,8 @@ export default function TwoPlayerGame() {
     const pressedStart = padPress();
     const pressedPause = padPress([PAD_START]);
     function loop(ts:number) {
-      const dt = Math.min((ts-lt)/1000,.05); lt=ts;
+      // rAF's timestamp can predate the time a game (re)started: never step backwards
+      const dt = Math.max(0, Math.min((ts - lt) / 1000, .05)); lt=ts;
       const start = pressedStart(), pause = pressedPause();
       if (!active && start) padActionRef.current?.();
       else if (active && (pause || (paused && start))) paused = !paused;
