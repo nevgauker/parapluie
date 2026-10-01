@@ -48,7 +48,7 @@ const TAU = Math.PI * 2;
  * Two rounds, because a single sine correlates badly for small integer seeds
  * and lines up identical shopfronts down a whole block.
  */
-function rand(seed: number): number {
+export function rand(seed: number): number {
   let x = Math.sin(seed * 12.9898 + 78.233) * 43758.5453;
   x -= Math.floor(x);
   const y = Math.sin((x + seed) * 39.3468 + 11.135) * 24634.6345;
@@ -307,7 +307,7 @@ export function drawGround(ctx: CanvasRenderingContext2D, v: StreetView) {
 const PROP_SPACING = 165;
 const SIGNS = ['COFFEE', 'PAIN', 'FLEURS', 'RAMEN', 'LIVRES'];
 
-function lampGlow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, strength = 1) {
+export function lampGlow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, strength = 1) {
   const g = ctx.createRadialGradient(x, y, 0, x, y, r);
   g.addColorStop(0, `rgba(${PALETTE.lampGlow},${0.34 * strength})`);
   g.addColorStop(0.4, `rgba(${PALETTE.lampGlow},${0.13 * strength})`);
@@ -318,7 +318,7 @@ function lampGlow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number
   ctx.fill();
 }
 
-function drawLamp(ctx: CanvasRenderingContext2D, x: number, y: number, flicker: number) {
+export function drawLamp(ctx: CanvasRenderingContext2D, x: number, y: number, flicker: number) {
   lampGlow(ctx, x, y, 140, 0.9 + flicker * 0.1);
   // base + fluted post, seen from above
   ctx.fillStyle = PALETTE.lampPost;
@@ -349,13 +349,17 @@ function drawLamp(ctx: CanvasRenderingContext2D, x: number, y: number, flicker: 
   ctx.stroke();
 }
 
-function drawBush(ctx: CanvasRenderingContext2D, x: number, y: number, seed: number, size: number) {
+/** `tones` is [shadow, mid, lit]; defaults to the hedge greens. */
+export function drawBush(
+  ctx: CanvasRenderingContext2D, x: number, y: number, seed: number, size: number,
+  tones: readonly [string, string, string] = [PALETTE.foliageDark, PALETTE.foliage, PALETTE.foliageLit],
+) {
   const blobs = 6 + Math.floor(rand(seed) * 4);
   // dark mass first, then mid tone, then lit scallops on the lamp side
   for (const [pass, col, shrink, off] of [
-    [0, PALETTE.foliageDark, 1, 0],
-    [1, PALETTE.foliage, 0.78, -1.5],
-    [2, PALETTE.foliageLit, 0.42, -3.5],
+    [0, tones[0], 1, 0],
+    [1, tones[1], 0.78, -1.5],
+    [2, tones[2], 0.42, -3.5],
   ] as [number, string, number, number][]) {
     ctx.fillStyle = col;
     for (let i = 0; i < blobs; i++) {
@@ -399,7 +403,7 @@ function drawAwning(ctx: CanvasRenderingContext2D, x: number, y: number, w: numb
   ctx.strokeRect(x, y, w, h);
 }
 
-function drawSignBoard(ctx: CanvasRenderingContext2D, x: number, y: number, label: string, tilt: number) {
+export function drawSignBoard(ctx: CanvasRenderingContext2D, x: number, y: number, label: string, tilt: number) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(tilt);
@@ -454,14 +458,34 @@ function drawPuddle(ctx: CanvasRenderingContext2D, x: number, y: number, rx: num
   ctx.restore();
 }
 
+/** One stretch of pavement that a city can dress with its own furniture. */
+export interface PropSlot {
+  /** Stable row index; feed it to `rand` for per-row choices. */
+  k: number;
+  /** Centre of the sidewalk, and the row's screen y. */
+  cx: number;
+  y: number;
+  /** -1 for the left sidewalk, 1 for the right. */
+  side: number;
+  /** Screen x of the building line and of the kerb on this side. */
+  outer: number;
+  kerb: number;
+  /** Sidewalk width left for furniture. */
+  usable: number;
+  t: number;
+}
+
+export type Furnish = (ctx: CanvasRenderingContext2D, slot: PropSlot) => void;
+
 /**
  * Lamps, hedges, awnings, drains and puddles, placed on stable world rows so
  * they scroll with the street instead of flickering.
  *
- * @param worldY camera position in world space (0 for non-scrolling games)
- * @param t      elapsed seconds, used for lamp flicker
+ * @param worldY  camera position in world space (0 for non-scrolling games)
+ * @param t       elapsed seconds, used for lamp flicker
+ * @param furnish replaces the default sidewalk furniture, for city streets
  */
-export function drawProps(ctx: CanvasRenderingContext2D, v: StreetView, worldY: number, t = 0) {
+export function drawProps(ctx: CanvasRenderingContext2D, v: StreetView, worldY: number, t = 0, furnish?: Furnish) {
   const { H, left, right, walk } = v;
   const usable = walk - 8;
   const kMin = Math.ceil(-(H / 2 + 160 + worldY) / PROP_SPACING);
@@ -503,6 +527,11 @@ export function drawProps(ctx: CanvasRenderingContext2D, v: StreetView, worldY: 
     }
 
     if (usable < 24) continue;
+
+    if (furnish) {
+      furnish(ctx, { k, cx, y, side, outer, kerb: side < 0 ? left : right, usable, t });
+      continue;
+    }
 
     if (kind < 0.44) {
       drawLamp(ctx, cx, y, Math.sin(t * 3 + k) * 0.5 + 0.5);
@@ -635,9 +664,10 @@ export function drawWalker(
     /** Canopy radius; when set, the figure carries it over their head. */
     umbrella?: number;
     spin?: number;
+    canopy?: Canopy;
   } = {},
 ) {
-  const { angle = 0, phase = 0, scale = WALKER_SCALE, wet = 0, umbrella, spin = 0 } = opts;
+  const { angle = 0, phase = 0, scale = WALKER_SCALE, wet = 0, umbrella, spin = 0, canopy } = opts;
   const hideHead = opts.hideHead ?? false;
   const jacket = wet > 0 ? mix(look.jacket, PALETTE.soaked, wet * 0.6) : look.jacket;
   const hair = look.hair ?? PALETTE.hair;
@@ -758,7 +788,7 @@ export function drawWalker(
     ctx.moveTo(sx, sy);
     ctx.lineTo(sx + (ux - sx) * 0.7, sy + (uy - sy) * 0.7);
     ctx.stroke();
-    drawUmbrella(ctx, ux, uy, umbrella, spin);
+    drawUmbrella(ctx, ux, uy, umbrella, spin, canopy);
   }
 
   // drips once they are soaked through
@@ -773,12 +803,20 @@ export function drawWalker(
   }
 }
 
-/** The hero prop: a yellow canopy seen from above. */
-export function drawUmbrella(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, spin = 0) {
+/** Umbrella fabric: flat colour, lit and shaded sides, rib lines, and an "r,g,b" bounce glow. */
+export interface Canopy { base: string; lit: string; shade: string; rib: string; halo: string }
+
+export const YELLOW_CANOPY: Canopy = {
+  base: PALETTE.umbrella, lit: PALETTE.umbrellaLit, shade: PALETTE.umbrellaShade,
+  rib: 'rgba(126,90,6,0.55)', halo: '245,200,60',
+};
+
+/** The hero prop: a canopy seen from above, yellow unless a city says otherwise. */
+export function drawUmbrella(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, spin = 0, canopy: Canopy = YELLOW_CANOPY) {
   // warm bounce light off the fabric
   const halo = ctx.createRadialGradient(x, y, r * 0.6, x, y, r * 2.1);
-  halo.addColorStop(0, 'rgba(245,200,60,0.13)');
-  halo.addColorStop(1, 'rgba(245,200,60,0)');
+  halo.addColorStop(0, `rgba(${canopy.halo},0.13)`);
+  halo.addColorStop(1, `rgba(${canopy.halo},0)`);
   ctx.fillStyle = halo;
   ctx.beginPath();
   ctx.arc(x, y, r * 2.1, 0, TAU);
@@ -805,16 +843,16 @@ export function drawUmbrella(ctx: CanvasRenderingContext2D, x: number, y: number
     ctx.quadraticCurveTo(Math.cos(am) * r * 1.06, Math.sin(am) * r * 1.06, Math.cos(a1) * r, Math.sin(a1) * r);
   }
   ctx.closePath();
-  ctx.fillStyle = PALETTE.umbrella;
+  ctx.fillStyle = canopy.base;
   ctx.fill();
   ctx.save();
   ctx.clip();
   // gentle dome shading, lamp side up-left — kept shallow so it stays fabric
   ctx.rotate(-spin);
   const dome = ctx.createLinearGradient(-r * 0.8, -r * 0.8, r * 0.8, r * 0.8);
-  dome.addColorStop(0, PALETTE.umbrellaLit);
-  dome.addColorStop(0.5, PALETTE.umbrella);
-  dome.addColorStop(1, PALETTE.umbrellaShade);
+  dome.addColorStop(0, canopy.lit);
+  dome.addColorStop(0.5, canopy.base);
+  dome.addColorStop(1, canopy.shade);
   ctx.fillStyle = dome;
   ctx.fillRect(-r * 1.2, -r * 1.2, r * 2.4, r * 2.4);
   // wet sheen on the lit shoulder
@@ -825,7 +863,7 @@ export function drawUmbrella(ctx: CanvasRenderingContext2D, x: number, y: number
   ctx.restore();
 
   // ribs, clearly drawn — they are what makes the shape read as an umbrella
-  ctx.strokeStyle = 'rgba(126,90,6,0.55)';
+  ctx.strokeStyle = canopy.rib;
   ctx.lineWidth = Math.max(1.2, r * 0.055);
   ctx.lineCap = 'round';
   for (let i = 0; i < gores; i++) {
@@ -835,7 +873,7 @@ export function drawUmbrella(ctx: CanvasRenderingContext2D, x: number, y: number
     ctx.lineTo(Math.cos(a) * r * 0.99, Math.sin(a) * r * 0.99);
     ctx.stroke();
   }
-  ctx.strokeStyle = 'rgba(108,78,4,0.6)';
+  ctx.strokeStyle = canopy.rib;
   ctx.lineWidth = 1.6;
   ctx.beginPath();
   for (let i = 0; i < gores; i++) {
