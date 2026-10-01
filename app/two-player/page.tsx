@@ -1,5 +1,6 @@
 import { TwoPlayerGame } from '../components/GameSection';
 import Link from 'next/link';
+import SoundToggle from '../components/SoundToggle';
 import Controls from './Controls';
 
 export const metadata = {
@@ -16,7 +17,10 @@ export default function TwoPlayerPage() {
           ◀ EXIT
         </Link>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--fog)', margin: 0, fontFamily: "'Space Grotesk',sans-serif", textShadow: 'var(--glow-brick)' }}>Two Player</h1>
-        <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.45)', textTransform: 'uppercase', letterSpacing: 1 }}>SAME SCREEN</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <SoundToggle />
+          <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.45)', textTransform: 'uppercase', letterSpacing: 1 }}>SAME SCREEN</div>
+        </div>
       </div>
 
       {/* Game Container */}

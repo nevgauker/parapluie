@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import SoundToggle from '../../components/SoundToggle';
 import { normalizeCode, isCode, type OnlineMode, type CityId } from '../../_lib/online/protocol';
 import LobbyLoader from './LobbyLoader';
 
@@ -30,8 +31,11 @@ export default async function RoomPage({ params, searchParams }: {
           ◀ EXIT
         </Link>
         <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--fog)', margin: 0, fontFamily: "'Space Grotesk',sans-serif" }}>Online</h1>
-        <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.45)', textTransform: 'uppercase', letterSpacing: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <SoundToggle />
+          <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.45)', textTransform: 'uppercase', letterSpacing: 1 }}>
           {isCode(code) ? `ROOM ${code}` : 'ONLINE'}
+        </div>
         </div>
       </div>
       <div style={{ flex: 1, overflow: 'hidden', position: 'relative', minHeight: 0 }}>

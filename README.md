@@ -32,9 +32,10 @@ The choice between solo and two players is part of the URL, for example
 and a link can open a mode directly. Every two-player mode can also be played
 online, each player on their own device; see [Online](#online).
 
-On touch devices, the two-player modes show an on-screen D-pad for each
-player. **Esc**, **P** or a gamepad's **Start** pauses any two-player game,
-and switching to another window or tab pauses it too.
+On touch devices, drag to steer: a thumbstick appears wherever your thumb
+lands (on one screen, P1 uses the left half and P2 the right). **Esc**, **P**
+or a gamepad's **Start** pauses any two-player game, and switching to another
+window or tab pauses it too.
 
 ### Open world
 
@@ -84,6 +85,16 @@ The follower's play drives the score in every mode:
 - In the two-player modes, a goal pays full points, times the streak, only
   if the follower was under cover when it was collected (with 0.3 s of
   grace). Collected with the follower out in the rain, it pays half.
+
+### Sound
+
+Everything you hear is synthesized in the browser; there are no audio
+files. The rain tells you where you stand: a muffled patter on the canopy
+under cover, the full downpour outside, and drips off the edge as you near
+the rim. Goals chime higher as your streak grows, close calls tick, and each
+city's hazard has its own sound: the taxi's horn and splash, the Tokyo
+gust. The 🔊 button in each game's header, or **M**, mutes it; the choice is
+remembered. Browsers start sound only after your first click, tap or key.
 
 ## Two players on one screen
 
@@ -149,6 +160,8 @@ app/
   components/            one component per game mode, plus:
     ModeSelector.tsx     the solo / two-player / online menu, driven by ?play=
     Seats.tsx            take-a-seat widget for two-player menus
+    TouchStick.tsx       floating thumbstick for touch screens
+    SoundToggle.tsx      the mute button
     JoinRoom.tsx         the homepage's room-code field
     online/              lobby and the online games (square co-op and duel, runner)
   _lib/
@@ -165,6 +178,7 @@ app/
     focus.ts             pause on lost focus, release held keys
     play.ts              the ?play= mode in the URL
     collide.ts           solid obstacles
+    sound.ts             synthesized rain and sound cues
     online/              relay protocol, room client with clock sync, snapshot smoothing
 relay/                   the Cloudflare Worker that pairs online players (own package)
 art/                     reference images the look is based on

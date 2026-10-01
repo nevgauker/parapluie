@@ -8,6 +8,7 @@ import {
   type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
+import { sound, playStreak } from '../_lib/sound';
 
 interface Drop { x: number; y: number; len: number; spd: number; a: number; }
 interface Goal { x: number; y: number; emoji: string; pts: number; dur: number; pause: number; age: number; pulse: number; reached: boolean; }
@@ -149,6 +150,7 @@ export default function OpenUmbrellaGame() {
           target.reached = true; pauseLeft = target.pause; dashLeft = 0;
           const pts = Math.round(target.pts * difficulty * streak.mult);
           score += pts;
+          sound.goal(streak.mult);
           floats.push({ x: wx, y: wy - 30, text: `+${pts}`, color: PALETTE.cream, life: 1 });
           const emoji = target.emoji;
           sparks.push(...Array.from({ length: 5 }, () => ({ x: wx, y: wy, vx: (Math.random() - .5) * 3, vy: (Math.random() - .5) * 3, life: 1, emoji })));
@@ -190,13 +192,16 @@ export default function OpenUmbrellaGame() {
       const edge = tickDryStreak(streak, sep, COVER_R, dt, difficulty);
       score += edge.pts;
       floats.push(...streakCallouts(edge.events, fx, fy));
+      playStreak(edge.events);
       floats = tickFloatTexts(floats, dt);
       if (sep > COVER_R) wet = Math.min(1, wet + dt * 0.18); else wet = Math.max(0, wet - dt * 0.05);
+      sound.rain(sep / COVER_R);
 
       sparks.forEach(s => { s.x += s.vx; s.y += s.vy; s.life -= dt * 1.5; });
       sparks = sparks.filter(s => s.life > 0);
 
       if (wet >= 1) {
+        sound.soaked();
         running = false;
         setEndStats({ score: Math.round(score), time: Math.round(elapsed) });
         setGameState('dead');

@@ -33,7 +33,8 @@ export interface CityEffect {
   dryShift: number;
   /** The follower is under a fixed shelter. */
   sheltered: boolean;
-  callouts: { text: string; color: string }[];
+  /** `cue` names the sound that goes with it (see sound.ts playCue) */
+  callouts: { text: string; color: string; cue?: 'honk' | 'splash' | 'gust' | 'awning' }[];
 }
 
 export interface CityEvents {
@@ -92,7 +93,7 @@ function taxis(rng: Rng): CityEvents {
       if (phase === 'idle' && timer <= 0) {
         phase = 'warn'; timer = TAXI_WARN;
         side = rng() < 0.5 ? -1 : 1;
-        fx.callouts.push({ text: side < 0 ? '🚕 taxi! ← kerb' : '🚕 taxi! kerb →', color: PALETTE.amber });
+        fx.callouts.push({ text: side < 0 ? '🚕 taxi! ← kerb' : '🚕 taxi! kerb →', color: PALETTE.amber, cue: 'honk' });
       } else if (phase === 'warn' && timer <= 0) {
         phase = 'drive';
         y = s.worldY - s.H / 2 - 90;
@@ -101,7 +102,7 @@ function taxis(rng: Rng): CityEvents {
         y += TAXI_SPEED * f;
         if (before < s.fy && y >= s.fy && Math.abs(s.fx - lane) < SPLASH_REACH) {
           fx.splash = SPLASH_WET;
-          fx.callouts.push({ text: 'SPLASH!', color: '#8fc4ea' });
+          fx.callouts.push({ text: 'SPLASH!', color: '#8fc4ea', cue: 'splash' });
           for (let i = 0; i < 14; i++) {
             spray.push({ x: lane, y: s.fy, vx: -side * (1 + Math.random() * 3), vy: (Math.random() - 0.7) * 2.5, life: 1 });
           }
@@ -226,7 +227,7 @@ function gusts(rng: Rng): CityEvents {
       if (phase === 'idle' && timer <= 0) {
         phase = 'warn'; timer = GUST_WARN;
         dir = rng() < 0.5 ? -1 : 1;
-        fx.callouts.push({ text: dir > 0 ? '🌸 gust →' : '← gust 🌸', color: '#f7a8c8' });
+        fx.callouts.push({ text: dir > 0 ? '🌸 gust →' : '← gust 🌸', color: '#f7a8c8', cue: 'gust' });
       } else if (phase === 'warn' && timer <= 0) {
         phase = 'blow'; timer = GUST_TIME;
       } else if (phase === 'blow') {
@@ -294,7 +295,7 @@ function awnings(rng: Rng): CityEvents {
       list = list.filter(a => a.y < s.worldY + s.H / 2 + AWNING_R + 40);
 
       fx.sheltered = list.some(a => Math.hypot(s.fx - a.x, s.fy - a.y) < AWNING_R - 6);
-      if (fx.sheltered && !wasSheltered) fx.callouts.push({ text: 'café awning ☕', color: PALETTE.cream });
+      if (fx.sheltered && !wasSheltered) fx.callouts.push({ text: 'café awning ☕', color: PALETTE.cream, cue: 'awning' });
       wasSheltered = fx.sheltered;
       return fx;
     },

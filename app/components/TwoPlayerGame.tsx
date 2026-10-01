@@ -7,6 +7,7 @@ import {
   type StreetView, type DryZone, type Ripple, type FloatText,
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
+import { sound, playStreak } from '../_lib/sound';
 import {
   SQUARE_W, SQUARE_H, SQUARE_INSET, SQUARE_COVER_R, SQUARE_GOALS, TOGETHER_GRACE, ALONE_SHARE,
   pickGoalSpot, type SquareGoalType,
@@ -199,6 +200,7 @@ export default function TwoPlayerGame() {
           const together = elapsed-coveredAt <= TOGETHER_GRACE;
           const pts = Math.round(g.pts*difficulty*(together ? streak.mult : ALONE_SHARE));
           wScore+=pts;
+          sound.goal(streak.mult, !together);
           floats.push({ x:wx, y:wy-34, text: together ? `+${pts} ${g.label}` : `+${pts} alone`, color: together ? PALETTE.cream : '#ef5844', life:1.2 });
           sparks.push(...Array.from({length:6}, ()=>({ x:wx, y:wy, vx:(Math.random()-.5)*4, vy:(Math.random()-.5)*4, life:1, emoji:g.emoji })));
           if (goals.filter(g2=>!g2.reached).length<2) spawnGoal();
@@ -219,6 +221,8 @@ export default function TwoPlayerGame() {
       const edge = tickDryStreak(streak, sep, R, dt, difficulty);
       fScore += edge.pts;
       floats.push(...streakCallouts(edge.events, fx, fy));
+      playStreak(edge.events);
+      sound.rain(sep/R);
       if (sep>R) { wet=Math.min(1, wet+dt*(.18+(sep-R)/R*.35)); }
       else { wet=Math.max(0, wet-dt*.055); fScore+=dt*COVER_PTS*difficulty*streak.mult; }
 
@@ -232,9 +236,11 @@ export default function TwoPlayerGame() {
 
       if (wet>=1) {
         wScore += SHAKE_BONUS*difficulty;
+        sound.soaked();
         endRound('soaked');
       } else if (elapsed>=ROUND_TIME) {
         fScore += HOME_BONUS*difficulty;
+        sound.home();
         endRound('home');
       }
     }
