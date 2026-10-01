@@ -8,6 +8,8 @@ import {
 } from '../_lib/street';
 import { newDryStreak, tickDryStreak, streakCallouts } from '../_lib/dryStreak';
 import { sound, playStreak, playCue } from '../_lib/sound';
+import { recordBest, bestKey, type BestResult } from '../_lib/bests';
+import BestLine from './BestLine';
 import { CITIES, CITY_IDS, type CityId } from '../_lib/cities';
 import { cityEvents } from '../_lib/cityEvents';
 import { cityFurnish, drawCityRoad } from '../_lib/cityStreet';
@@ -39,7 +41,7 @@ const TOP_SPEED = WALK_PUSH * 0.88 / 0.12;
 export default function RunnerGameSolo() {
   const [gameState, setGameState] = useState<GameState>('menu');
   const [city, setCity] = useState<CityId>('newyork');
-  const [endStats, setEndStats] = useState({ score: 0, time: 0 });
+  const [endStats, setEndStats] = useState<{ score: number; time: number; cause: string; best: BestResult | null }>({ score: 0, time: 0, cause: '', best: null });
   const ref = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef({ gameState });
   const isTouchRef = useRef(false);
@@ -87,6 +89,7 @@ export default function RunnerGameSolo() {
     let pauseLeft = 0, dashLeft = 0;
     // was the follower already pressed against an obstacle last frame
     let bumping = false;
+    let lastSplash = -99, lastGust = -99;
     // the follower's reward for playing the rim: multiplier + close-call bonus
     const streak = newDryStreak();
     // callouts live in screen space so they rise instead of scrolling away
@@ -284,6 +287,9 @@ export default function RunnerGameSolo() {
       if (sep > coverR && !weather.sheltered) wet = Math.min(1, wet + dt * 0.15 * cityConfig.soak);
       else wet = Math.max(0, wet - dt * 0.08);
       wet = Math.min(1, wet + weather.splash);
+      // remembered for the end screen: what finally got you
+      if (weather.splash > 0) lastSplash = elapsed;
+      if (weather.wind !== 0) lastGust = elapsed;
 
       sparks.forEach(s => {
         s.x += s.vx; s.y += s.vy; s.life -= dt * 1.5;
@@ -293,7 +299,8 @@ export default function RunnerGameSolo() {
       if (wet >= 1) {
         sound.soaked();
         running = false;
-        setEndStats({ score: Math.round(score), time: Math.round(elapsed) });
+        const final = Math.round(score);
+        setEndStats({ score: final, time: Math.round(elapsed), cause: elapsed - lastSplash < 2 ? 'A taxi soaked you.' : elapsed - lastGust < 1.5 ? 'The gust blew you out of cover.' : `Soaked in ${cityConfig.name} after ${Math.round(elapsed)}s.`, best: recordBest(bestKey('runner', 'solo', city), final, Math.round(elapsed)) });
         setGameState('dead');
       }
     }
@@ -368,7 +375,8 @@ export default function RunnerGameSolo() {
     }
 
     function loop(ts: number) {
-      const dt = Math.min((ts - lastTs) / 1000, 0.05);
+      // rAF's timestamp can predate the time a game (re)started: never step backwards
+      const dt = Math.max(0, Math.min((ts - lastTs) / 1000, 0.05));
       lastTs = ts;
       if (running) update(dt);
       draw();
@@ -428,7 +436,7 @@ export default function RunnerGameSolo() {
       {gameState === 'dead' && (
         <div className="absolute inset-0 flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.82)' }}>
           <p style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: 24, fontWeight: 700, color: 'var(--fog)', marginBottom: 4 }}>{endStats.time > 30 ? 'Not bad.' : 'Soaked.'}</p>
-          <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.35)', marginBottom: 24 }}>{endStats.time > 60 ? 'Great distance!' : endStats.time > 30 ? 'Keep going' : 'Stay together!'}</p>
+          <p style={{ fontSize: 12, color: 'rgba(240,236,224,0.35)', marginBottom: 24 }}>{endStats.cause}</p>
           <div className="flex gap-6 mb-7">
             {[['score', endStats.score], ['time', endStats.time + 's']].map(([l, v]) => (
               <div key={l as string} style={{ textAlign: 'center' }}>
@@ -437,6 +445,7 @@ export default function RunnerGameSolo() {
               </div>
             ))}
           </div>
+          <BestLine result={endStats.best} score={endStats.score} />
           <div className="flex gap-3">
             <button onClick={handleRestart} style={{ padding: '10px 24px', borderRadius: 24, background: 'var(--fog)', color: '#1a1408', border: 'none', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Play again</button>
             <button onClick={handleMenu} style={{ padding: '10px 24px', borderRadius: 24, background: 'transparent', color: 'rgba(240,236,224,0.55)', border: '.5px solid rgba(240,236,224,0.2)', fontSize: 13, cursor: 'pointer', fontFamily: 'Inter,sans-serif' }}>Menu</button>

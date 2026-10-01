@@ -3,6 +3,8 @@
 import { StreetBackdrop, AnimatedTitle } from './components/HeroClient';
 import Link from 'next/link';
 import JoinRoom from './components/JoinRoom';
+import CardBest from './components/CardBest';
+import type { BestMode } from './_lib/bests';
 
 /**
  * Modes share the game's palette: foliage green for the open square, the
@@ -11,6 +13,7 @@ import JoinRoom from './components/JoinRoom';
 const MODES = [
   {
     href: '/open-world',
+    best: 'open' as BestMode | null,
     kicker: '● SOLO OR TOGETHER',
     players: '1–2P',
     title: 'Open world',
@@ -23,6 +26,7 @@ const MODES = [
   },
   {
     href: '/runner',
+    best: 'runner' as BestMode | null,
     kicker: '● ENDLESS',
     players: '1–2P',
     title: 'Runner',
@@ -35,6 +39,8 @@ const MODES = [
   },
   {
     href: '/two-player',
+    // the duel is a contest, not a score: no best
+    best: null as BestMode | null,
     kicker: '● VERSUS',
     players: '2P',
     title: 'Two Player',
@@ -188,8 +194,11 @@ export default function Home() {
                         {m.body}
                       </p>
                     </div>
-                    <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.4)', marginTop: 2 }}>
-                      {m.players}
+                    <div style={{ marginTop: 2 }}>
+                      <div style={{ fontSize: 8, fontFamily: 'var(--pixel)', color: 'rgba(240,236,224,0.4)', textAlign: 'right' }}>
+                        {m.players}
+                      </div>
+                      {m.best && <CardBest mode={m.best} />}
                     </div>
                   </div>
 

@@ -287,7 +287,8 @@ export default function RunnerGame() {
     }
 
     function loop(ts: number) {
-      const dt = Math.min((ts - lt) / 1000, 0.05); lt = ts;
+      // rAF's timestamp can predate the time a game (re)started: never step backwards
+      const dt = Math.max(0, Math.min((ts - lt) / 1000, 0.05)); lt = ts;
       drawBg(); drawScene();
       if (active) update(dt);
       raf = requestAnimationFrame(loop);
